@@ -16,18 +16,17 @@ import {FixedPointMathLib} from "src/libraries/FixedPointMathLib.sol";
 ///
 /// @dev Vesting Schedule Example:
 ///      For a strategy with:
-///      - 10% initial unlock (initialUnlockPercentage = 1000)
+///      - 20% cliff unlock (cliffPercentage = 2000)
 ///      - 7-day cliff (cliffDuration = 7 days)
 ///      - 6-month vesting (vestingDuration = 180 days)
 ///      - Total allocation = 1000 tokens
 ///
 ///      The schedule would be:
-///      1. Day 0: 100 tokens (10%) available immediately
-///      2. Day 1-7: No additional tokens (cliff period)
-///      3. Day 8-180: 900 tokens vest linearly
-///         - Daily rate = 900 / 173 days ≈ 5.2 tokens per day
+///      1. Day 0-7: 200 tokens (20%) available during cliff
+///      2. Day 8-180: 800 tokens vest linearly
+///         - Daily rate = 800 / 173 days ≈ 4.6 tokens per day
 ///         - Formula: (remainingAmount * daysSinceCliff) / (vestingDuration - cliffDuration)
-///      4. Day 180+: All tokens available
+///      3. Day 180+: All tokens available
 contract VestingStrategy is Ownable, ReentrancyGuard {
     using FixedPointMathLib for uint256;
 
@@ -36,15 +35,25 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
 
     // Struct to hold vesting strategy parameters
     struct Strategy {
-        uint256 id;
-        uint256 initialUnlockPercentage; // in basis points (1% = 100)
-        uint256 cliffDuration;
-        uint256 cliffPercentage; // in basis points
-        uint256 vestingDuration;
-        uint256 expiryDate;
-        uint256 startTime; // When vesting starts for this strategy
-        bytes32 merkleRoot;
-        bool isActive;
+        uint256 id;                      // Unique identifier for the strategy
+        uint256 cliffDuration;           // in seconds
+        uint256 cliffPercentage;         // in basis points (percentage available during cliff)
+        uint256 vestingDuration;         // in seconds
+        uint256 expiryDate;              // in seconds
+        uint256 startTime;               // When vesting starts for this strategy (in seconds)
+        bytes32 merkleRoot;              // Merkle root for the strategy
+        bool isActive;                   // Whether the strategy is active
+        bool claimWithDelay;             // Whether tokens can only be claimed at vesting end
+    }
+
+    struct UserVesting {
+        uint256 strategyId;      // The strategy the user is participating in (0 if none)
+        uint256 claimedAmount;   // Total amount claimed by the user
+        uint256 lastClaimTime;   // Timestamp of last claim
+        bool cliffClaimed;       // Whether the user has claimed their cliff amount
+        uint256 delayedAmount;   // Amount of tokens currently locked for delayed claim
+        uint256 delayStartTime;  // When the delayed claim started (0 if not delayed)
+        bool isDelayedClaim;     // Whether the user has a delayed claim active
     }
 
     // Token being vested
@@ -53,11 +62,8 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
     // Mapping of strategy ID to Strategy
     mapping(uint256 => Strategy) public strategies;
     
-    // Mapping of user address to their claimed amounts per strategy
-    mapping(uint256 => mapping(address => uint256)) public claimedAmount;
-    
-    // Mapping to track if user has claimed initial amount per strategy
-    mapping(uint256 => mapping(address => bool)) public initialClaimed;
+    // Mapping of user address to their vesting information
+    mapping(address => UserVesting) public userVestingInfo;
     
     // Counter for strategy IDs
     uint256 private _nextStrategyId;
@@ -65,20 +71,27 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
     // Events
     event StrategyCreated(
         uint256 indexed strategyId,
-        uint256 initialUnlockPercentage,
         uint256 cliffDuration,
         uint256 cliffPercentage,
         uint256 vestingDuration,
         uint256 expiryDate,
         bytes32 merkleRoot,
-        uint256 startTime
+        uint256 startTime,
+        bool claimWithDelay
     );
     event StrategyUpdated(uint256 indexed strategyId, bool isActive);
     event TokensClaimed(
         address indexed user,
         uint256 indexed strategyId,
         uint256 amount,
-        bool isInitialClaim
+        bool isInitialClaim,
+        uint256 timestamp
+    );
+    event TokensReleased(
+        address indexed user,
+        uint256 indexed strategyId,
+        uint256 amount,
+        uint256 releaseTime
     );
 
     // Errors
@@ -90,6 +103,10 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
     error ClaimNotAllowed();
     error InvalidAmount();
     error InvalidUnlockPercentages();
+    error UserAlreadyInStrategy();
+    error DelayedClaimAlreadyActive();
+    error DelayedClaimNotActive();
+    error DelayedClaimLockNotExpired();
 
     constructor(address _vestingToken) Ownable(_msgSender()) {
         vestingToken = IERC20(_vestingToken);
@@ -99,14 +116,14 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
      * @notice Creates a new vesting strategy
      */
     function createStrategy(
-        uint256 initialUnlockPercentage,
         uint256 cliffDuration,
         uint256 cliffPercentage,
         uint256 vestingDuration,
         uint256 expiryDate,
-        bytes32 merkleRoot
+        bytes32 merkleRoot,
+        bool claimWithDelay
     ) external onlyOwner {
-        if (initialUnlockPercentage + cliffPercentage > BASIS_POINTS) revert InvalidUnlockPercentages();
+        if (cliffPercentage > BASIS_POINTS) revert InvalidUnlockPercentages();
         if (expiryDate <= block.timestamp) revert InvalidStrategy();
         
         uint256 strategyId = _nextStrategyId++;
@@ -114,52 +131,26 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
         
         strategies[strategyId] = Strategy({
             id: strategyId,
-            initialUnlockPercentage: initialUnlockPercentage,
             cliffDuration: cliffDuration,
             cliffPercentage: cliffPercentage,
             vestingDuration: vestingDuration,
             expiryDate: expiryDate,
             isActive: true,
             merkleRoot: merkleRoot,
-            startTime: startTime
+            startTime: startTime,
+            claimWithDelay: claimWithDelay
         });
 
         emit StrategyCreated(
             strategyId,
-            initialUnlockPercentage,
             cliffDuration,
             cliffPercentage,
             vestingDuration,
             expiryDate,
             merkleRoot,
-            startTime
+            startTime,
+            claimWithDelay
         );
-    }
-
-    /**
-     * @notice Checks if the contract has sufficient token balance and allowance
-     * @param strategyId ID of the strategy
-     * @param totalAllocation Total allocation for the user
-     * @return hasBalance Whether the contract has sufficient token balance
-     * @return hasAllowance Whether the contract has sufficient token allowance
-     */
-    function checkTokenStatus(
-        uint256 strategyId,
-        uint256 totalAllocation
-    ) external view returns (bool hasBalance, bool hasAllowance) {
-        Strategy storage strategy = strategies[strategyId];
-        if (strategy.id == 0) revert StrategyNotFound();
-
-        // Check contract's token balance
-        uint256 balance = vestingToken.balanceOf(address(this));
-        hasBalance = balance >= totalAllocation;
-
-        // Check token holder's allowance to this contract
-        address tokenHolder = owner(); // Assuming owner is the token holder
-        uint256 allowance = vestingToken.allowance(tokenHolder, address(this));
-        hasAllowance = allowance >= totalAllocation;
-
-        return (hasBalance, hasAllowance);
     }
 
     /**
@@ -170,8 +161,11 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
      * @dev This function will:
      *      1. Verify the merkle proof
      *      2. Calculate claimable amount based on vesting schedule
-     *      3. Transfer tokens from the contract to the claimer
+     *      3. Either:
+     *         a. Transfer tokens immediately (if claimWithDelay is false)
+     *         b. Lock tokens until vesting period ends (if claimWithDelay is true)
      *      Note: The contract must have sufficient token balance or allowance
+     *      Note: Users can only participate in one strategy at a time
      */
     function claim(
         uint256 strategyId,
@@ -182,13 +176,66 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
         if (!strategies[strategyId].isActive) revert StrategyInactive();
         if (totalAllocation == 0) revert InvalidAmount();
 
+        Strategy storage strategy = strategies[strategyId];
+        address user = _msgSender();
+        uint256 currentTime = block.timestamp;
+        
+        // Get user's vesting info
+        UserVesting storage userInfo = userVestingInfo[user];
+        
+        // Check if user is already participating in a strategy
+        if (userInfo.strategyId != 0 && userInfo.strategyId != strategyId) {
+            revert UserAlreadyInStrategy();
+        }
+
         // Verify merkle proof
-        bytes32 leaf = keccak256(abi.encodePacked(_msgSender(), totalAllocation));
-        if (!MerkleProof.verify(merkleProof, strategies[strategyId].merkleRoot, leaf)) {
+        bytes32 leaf = keccak256(abi.encodePacked(user, totalAllocation));
+        if (!MerkleProof.verify(merkleProof, strategy.merkleRoot, leaf)) {
             revert InvalidMerkleProof();
         }
 
-        (uint256 claimable, bool isInitial) = _calculateClaimable(_msgSender(), strategyId, totalAllocation);
+        // Handle delayed claim release if user has a delayed claim
+        if (userInfo.isDelayedClaim) {
+            if (currentTime < userInfo.delayStartTime + strategy.vestingDuration) {
+                revert ClaimNotAllowed();
+            }
+
+            uint256 delayedAmount = userInfo.delayedAmount;
+            
+            // Reset delayed claim state
+            userInfo.delayedAmount = 0;
+            userInfo.delayStartTime = 0;
+            userInfo.isDelayedClaim = false;
+
+            // Transfer delayed claim tokens to user
+            require(vestingToken.transfer(user, delayedAmount), "Transfer failed");
+
+            emit TokensReleased(user, strategyId, delayedAmount, currentTime);
+            return;
+        }
+
+        // For strategies with claimWithDelay, only allow claims at vesting end
+        if (strategy.claimWithDelay) {
+            if (currentTime < strategy.startTime + strategy.vestingDuration) {
+                revert ClaimNotAllowed();
+            }
+            // When claiming at vesting end, user gets their full allocation
+            if (userInfo.claimedAmount > 0) revert ClaimNotAllowed();
+            
+            // Update user's delayed claim info
+            userInfo.delayedAmount = totalAllocation;
+            userInfo.delayStartTime = currentTime;
+            userInfo.isDelayedClaim = true;
+            userInfo.claimedAmount = totalAllocation;
+            userInfo.lastClaimTime = currentTime;
+            userInfo.cliffClaimed = true;
+
+            emit TokensClaimed(user, strategyId, totalAllocation, true, currentTime);
+            return;
+        }
+
+        // Normal claim process for strategies without claimWithDelay
+        (uint256 claimable, bool isInitial) = _calculateClaimable(user, strategyId, totalAllocation);
         if (claimable == 0) revert NoTokensToClaim();
 
         // Check if contract has enough tokens
@@ -201,16 +248,22 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
             );
         }
 
-        // Update claimed amounts
-        claimedAmount[strategyId][_msgSender()] += claimable;
+        // Update user's vesting info
+        userInfo.claimedAmount += claimable;
+        userInfo.lastClaimTime = currentTime;
         if (isInitial) {
-            initialClaimed[strategyId][_msgSender()] = true;
+            userInfo.cliffClaimed = true;
         }
 
-        // Transfer tokens to claimer
-        require(vestingToken.transfer(_msgSender(), claimable), "Transfer failed");
+        // Set user's strategy if this is their first claim
+        if (userInfo.strategyId == 0) {
+            userInfo.strategyId = strategyId;
+        }
 
-        emit TokensClaimed(_msgSender(), strategyId, claimable, isInitial);
+        // Transfer tokens immediately
+        require(vestingToken.transfer(user, claimable), "Transfer failed");
+
+        emit TokensClaimed(user, strategyId, claimable, isInitial, currentTime);
     }
 
     /**
@@ -221,13 +274,17 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
      * @return claimable Amount that can be claimed
      * @return isInitial Whether this is the initial claim
      * @dev Calculation steps:
-     *      1. Initial unlock: Available immediately if not claimed
-     *         amount = (totalAllocation * initialUnlockPercentage) / 10000
-     *      2. Cliff period: No additional tokens until cliffDuration
-     *      3. Linear vesting: After cliff, remaining tokens vest linearly
-     *         remaining = totalAllocation - initialUnlock - cliffAmount
-     *         dailyRate = remaining / (vestingDuration - cliffDuration)
-     *         vested = dailyRate * daysSinceCliff
+     *      1. For strategies with claimWithDelay:
+     *         - Only returns claimable amount at vesting end
+     *         - Returns full allocation if vesting period has ended
+     *         - Returns 0 if vesting period hasn't ended
+     *      2. For normal strategies:
+     *         a. Cliff period: Available immediately if not claimed
+     *            amount = (totalAllocation * cliffPercentage) / 10000
+     *         b. Linear vesting: After cliff, remaining tokens vest linearly
+     *            remaining = totalAllocation - cliffAmount
+     *            dailyRate = remaining / (vestingDuration - cliffDuration)
+     *            vested = dailyRate * daysSinceCliff
      */
     function _calculateClaimable(
         address user,
@@ -235,15 +292,29 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
         uint256 totalAllocation
     ) internal view returns (uint256 claimable, bool isInitial) {
         Strategy storage strategy = strategies[strategyId];
-        uint256 elapsed = block.timestamp - strategy.startTime;
+        UserVesting storage userInfo = userVestingInfo[user];
+        uint256 currentTime = block.timestamp;
+
+        // For strategies with claimWithDelay, only allow claims at vesting end
+        if (strategy.claimWithDelay) {
+            if (currentTime < strategy.startTime + strategy.vestingDuration) {
+                return (0, false);
+            }
+            // At vesting end, return full allocation if not claimed
+            if (userInfo.claimedAmount == 0) {
+                return (totalAllocation, true);
+            }
+            return (0, false);
+        }
+
+        uint256 elapsed = currentTime - strategy.startTime;
         uint256 vested = 0;
 
-        // Initial unlock calculation
-        if (!initialClaimed[strategyId][user]) {
-            // Use mulDivDown for precise percentage calculation
+        // Cliff percentage calculation
+        if (!userInfo.cliffClaimed && elapsed <= strategy.cliffDuration) {
             vested += FixedPointMathLib.mulDivDown(
                 totalAllocation,
-                strategy.initialUnlockPercentage,
+                strategy.cliffPercentage,
                 BASIS_POINTS
             );
             isInitial = true;
@@ -253,48 +324,35 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
         if (elapsed > strategy.cliffDuration) {
             uint256 vestingElapsed = elapsed - strategy.cliffDuration;
             
-            // Cap vesting at maximum duration
             if (vestingElapsed >= (strategy.vestingDuration - strategy.cliffDuration)) {
                 vestingElapsed = strategy.vestingDuration - strategy.cliffDuration;
             }
 
-            // Calculate remaining amount that vests linearly using mulDivDown
             uint256 remaining = FixedPointMathLib.mulDivDown(
                 totalAllocation,
-                BASIS_POINTS - strategy.initialUnlockPercentage - strategy.cliffPercentage,
+                BASIS_POINTS - strategy.cliffPercentage,
                 BASIS_POINTS
             );
 
-            // Calculate linear vesting with precise division using mulDivDown
             uint256 linearVested = FixedPointMathLib.mulDivDown(
                 remaining,
                 vestingElapsed,
                 strategy.vestingDuration - strategy.cliffDuration
             );
 
-            // Ensure remaining amount at vesting end
             if (vestingElapsed >= strategy.vestingDuration - strategy.cliffDuration) {
                 linearVested = remaining;
-            }
-
-            // Add cliff amount if not claimed, using mulDivDown
-            if (!initialClaimed[strategyId][user]) {
-                vested += FixedPointMathLib.mulDivDown(
-                    totalAllocation,
-                    strategy.cliffPercentage,
-                    BASIS_POINTS
-                );
             }
 
             vested += linearVested;
         }
 
-        uint256 alreadyClaimed = claimedAmount[strategyId][user];
+        uint256 alreadyClaimed = userInfo.claimedAmount;
 
         // Calculate claimable amount
-        if (vested > alreadyClaimed && block.timestamp <= strategy.expiryDate) {
+        if (vested > alreadyClaimed && currentTime <= strategy.expiryDate) {
             claimable = vested - alreadyClaimed;
-        } else if (totalAllocation > alreadyClaimed && block.timestamp > strategy.expiryDate) {
+        } else if (totalAllocation > alreadyClaimed && currentTime > strategy.expiryDate) {
             claimable = totalAllocation - alreadyClaimed;
         }
 
@@ -335,5 +393,16 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
     function updateMerkleRoot(uint256 strategyId, bytes32 newMerkleRoot) external onlyOwner {
         if (strategies[strategyId].id == 0) revert StrategyNotFound();
         strategies[strategyId].merkleRoot = newMerkleRoot;
+    }
+
+    /**
+     * @notice Returns the user's vesting information
+     * @param user Address of the user
+     * @return UserVesting struct containing all user vesting information
+     */
+    function getUserVestingInfo(
+        address user
+    ) external view returns (UserVesting memory) {
+        return userVestingInfo[user];
     }
 }
