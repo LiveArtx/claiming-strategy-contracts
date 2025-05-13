@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {FixedPointMathLib} from "src/libraries/FixedPointMathLib.sol";
@@ -27,7 +27,7 @@ import {FixedPointMathLib} from "src/libraries/FixedPointMathLib.sol";
 ///         - Daily rate = 800 / 173 days ≈ 4.6 tokens per day
 ///         - Formula: (remainingAmount * daysSinceCliff) / (vestingDuration - cliffDuration)
 ///      3. Day 180+: All tokens available
-contract VestingStrategy is Ownable, ReentrancyGuard {
+contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     using FixedPointMathLib for uint256;
 
     /// @notice Basis points denominator (100%)
@@ -57,13 +57,13 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
     }
 
     // Token being vested
-    IERC20 public immutable vestingToken;
+    IERC20 public vestingToken;
 
     // Mapping of strategy ID to Strategy
-    mapping(uint256 => Strategy) public strategies;
+    mapping(uint256 => Strategy) private _strategies;
     
     // Mapping of user address to their vesting information
-    mapping(address => UserVesting) public userVestingInfo;
+    mapping(address => UserVesting) private _userVestingInfo;
     
     // Counter for strategy IDs
     uint256 private _nextStrategyId;
@@ -108,8 +108,12 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
     error DelayedClaimNotActive();
     error DelayedClaimLockNotExpired();
 
-    constructor(address _vestingToken) Ownable(_msgSender()) {
+  
+
+    function initialize(address _vestingToken) external initializer {
         vestingToken = IERC20(_vestingToken);
+        __Ownable_init(_msgSender());
+        __ReentrancyGuard_init();
     }
 
     /**
@@ -129,7 +133,7 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
         uint256 strategyId = _nextStrategyId++;
         uint256 startTime = block.timestamp;
         
-        strategies[strategyId] = Strategy({
+        _strategies[strategyId] = Strategy({
             id: strategyId,
             cliffDuration: cliffDuration,
             cliffPercentage: cliffPercentage,
@@ -172,16 +176,16 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
         uint256 totalAllocation,
         bytes32[] calldata merkleProof
     ) external nonReentrant {
-        if (strategies[strategyId].id == 0) revert StrategyNotFound();
-        if (!strategies[strategyId].isActive) revert StrategyInactive();
+        if (_strategies[strategyId].id == 0) revert StrategyNotFound();
+        if (!_strategies[strategyId].isActive) revert StrategyInactive();
         if (totalAllocation == 0) revert InvalidAmount();
 
-        Strategy storage strategy = strategies[strategyId];
+        Strategy storage strategy = _strategies[strategyId];
         address user = _msgSender();
         uint256 currentTime = block.timestamp;
         
         // Get user's vesting info
-        UserVesting storage userInfo = userVestingInfo[user];
+        UserVesting storage userInfo = _userVestingInfo[user];
         
         // Check if user is already participating in a strategy
         if (userInfo.strategyId != 0 && userInfo.strategyId != strategyId) {
@@ -291,8 +295,8 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
         uint256 strategyId,
         uint256 totalAllocation
     ) internal view returns (uint256 claimable, bool isInitial) {
-        Strategy storage strategy = strategies[strategyId];
-        UserVesting storage userInfo = userVestingInfo[user];
+        Strategy storage strategy = _strategies[strategyId];
+        UserVesting storage userInfo = _userVestingInfo[user];
         uint256 currentTime = block.timestamp;
 
         // For strategies with claimWithDelay, only allow claims at vesting end
@@ -380,8 +384,8 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
      * @param isActive New active status
      */
     function updateStrategyStatus(uint256 strategyId, bool isActive) external onlyOwner {
-        if (strategies[strategyId].id == 0) revert StrategyNotFound();
-        strategies[strategyId].isActive = isActive;
+        if (_strategies[strategyId].id == 0) revert StrategyNotFound();
+        _strategies[strategyId].isActive = isActive;
         emit StrategyUpdated(strategyId, isActive);
     }
 
@@ -391,18 +395,34 @@ contract VestingStrategy is Ownable, ReentrancyGuard {
      * @param newMerkleRoot New merkle root
      */
     function updateMerkleRoot(uint256 strategyId, bytes32 newMerkleRoot) external onlyOwner {
-        if (strategies[strategyId].id == 0) revert StrategyNotFound();
-        strategies[strategyId].merkleRoot = newMerkleRoot;
+        if (_strategies[strategyId].id == 0) revert StrategyNotFound();
+        _strategies[strategyId].merkleRoot = newMerkleRoot;
     }
 
     /**
-     * @notice Returns the user's vesting information
+     * @notice Returns the strategy for a given ID
+     * @param strategyId ID of the strategy to get
+     * @return Strategy struct containing all strategy information
+     */
+    function getStrategy(uint256 strategyId) external view returns (Strategy memory) {
+        return _strategies[strategyId];
+    }
+
+    /**
+     * @notice Returns the vesting information for a given user
      * @param user Address of the user
      * @return UserVesting struct containing all user vesting information
      */
-    function getUserVestingInfo(
-        address user
-    ) external view returns (UserVesting memory) {
-        return userVestingInfo[user];
+    function getUserVestingInfo(address user) external view returns (UserVesting memory) {
+        return _userVestingInfo[user];
+    }
+
+    /**
+     * @notice Updates a user's vesting information (owner only)
+     * @param user Address of the user to update
+     * @param info New vesting information
+     */
+    function setUserVestingInfo(address user, UserVesting calldata info) external onlyOwner {
+        _userVestingInfo[user] = info;
     }
 }
