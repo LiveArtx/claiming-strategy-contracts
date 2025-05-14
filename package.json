@@ -1,0 +1,11 @@
+{
+  "name": "claiming-strategy-contracts",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/LiveArtx/claiming-strategy-contracts.git",
+  "author": "Jason Schwarz <jason.c.schwarz@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "forge:coverage": "forge coverage --fork-url ' https://base-mainnet.g.alchemy.com/v2/6BKUh54FFL_a9HeYi7LnO9xOGG-QYX_5' --ir-minimum -vvvv --report lcov && lcov --remove lcov.info -o lcov_filtered.info && genhtml lcov_filtered.info --branch-coverage --output-dir coverage --ignore-errors category && rm lcov.info && rm lcov_filtered.info && open coverage/index.html"
+  }
+}

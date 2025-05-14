@@ -1,0 +1,1 @@
+genhtml lcov_filtered.info --branch-coverage --output-dir coverage --ignore-errors category

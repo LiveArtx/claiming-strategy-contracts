@@ -3,13 +3,15 @@ pragma solidity ^0.8.13;
 
 import {VestingStrategy} from "src/VestingStrategy.sol";
 import {MockERC20Token} from "src/mock/ERC20Mock.sol";
+import {FailedCallReceiver} from "src/mock/FailedCallReceiver.sol";
 import "forge-std/Test.sol";
 
 // ex: forge clean && source .env && forge test  --via-ir -vvvv
 
 abstract contract ContractUnderTest is Test {
     VestingStrategy internal vestingStrategy;
-    MockERC20Token public mockERC20Token;
+    MockERC20Token internal mockERC20Token;
+    FailedCallReceiver internal failedCallReceiver;
 
     uint256 public mainnetFork;
 
@@ -20,6 +22,7 @@ abstract contract ContractUnderTest is Test {
     address payable claimer1 = payable(makeAddr("claimer1"));
     address payable claimer2 = payable(makeAddr("claimer2"));
     address payable unauthorizedUser = payable(makeAddr("unauthorizedUser"));
+    address payable failedReceiver;
 
     // Constants
     uint256 public CLAIM_AMOUNT = 1000 * 10 ** 18;
@@ -49,10 +52,13 @@ abstract contract ContractUnderTest is Test {
         vm.deal(unauthorizedUser, 100 ether);
 
         mockERC20Token = new MockERC20Token();
+        mockERC20Token.mint(address(vestingStrategy), INITIAL_MINT_AMOUNT);
 
         vestingStrategy.initialize(address(mockERC20Token));
 
         vm.label({account: address(mockERC20Token), newLabel: "MockArtToken"});
+
+        failedCallReceiver = new FailedCallReceiver();
     }
 
     function _claimerDetails()

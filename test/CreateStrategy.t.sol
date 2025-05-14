@@ -31,10 +31,10 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             CLAIM_WITH_DELAY
         );
 
-        // Verify strategy was created (first strategy has ID 0)
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(0);
+        // Verify strategy was created (first strategy has ID 1)
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(1);
         
-        assertEq(strategy.id, 0);
+        assertEq(strategy.id, 1);
         assertEq(strategy.cliffDuration, CLIFF_DURATION);
         assertEq(strategy.cliffPercentage, CLIFF_PERCENTAGE);
         assertEq(strategy.vestingDuration, VESTING_DURATION);
@@ -111,8 +111,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         );
 
         // Verify IDs are incrementing
-        VestingStrategy.Strategy memory strategy1 = vestingStrategy.getStrategy(0);
-        VestingStrategy.Strategy memory strategy2 = vestingStrategy.getStrategy(1);
+        VestingStrategy.Strategy memory strategy1 = vestingStrategy.getStrategy(1);
+        VestingStrategy.Strategy memory strategy2 = vestingStrategy.getStrategy(2);
         assertEq(strategy2.id, strategy1.id + 1);
     }
 
@@ -121,7 +121,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         
         vm.expectEmit(true, false, false, true);
         emit VestingStrategy.StrategyCreated(
-            0, // First strategy ID
+            1, // First strategy ID
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -153,7 +153,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             true // Enable delayed claims
         );
 
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(0);
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(1);
         assertTrue(strategy.claimWithDelay);
         assertTrue(strategy.isActive);
     }
@@ -170,7 +170,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             CLAIM_WITH_DELAY
         );
 
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(0);
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(1);
         assertEq(strategy.cliffDuration, 0, "Cliff duration should be 0");
         assertEq(strategy.cliffPercentage, 0, "Cliff percentage should be 0");
         assertEq(strategy.vestingDuration, VESTING_DURATION, "Vesting duration should remain unchanged");
@@ -191,7 +191,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
 
         // Create new vesting info
         VestingStrategy.UserVesting memory newInfo = VestingStrategy.UserVesting({
-            strategyId: 0,
+            strategyId: 1,
             claimedAmount: 100,
             lastClaimTime: block.timestamp,
             cliffClaimed: true,
@@ -218,7 +218,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         vm.startPrank(user1);
         
         VestingStrategy.UserVesting memory newInfo = VestingStrategy.UserVesting({
-            strategyId: 0,
+            strategyId: 1,
             claimedAmount: 100,
             lastClaimTime: block.timestamp,
             cliffClaimed: true,
