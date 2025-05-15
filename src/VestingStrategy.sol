@@ -113,11 +113,17 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         vestingToken = IERC20(_vestingToken);
         __Ownable_init(_msgSender());
         __ReentrancyGuard_init();
-        _nextStrategyId = 1; // Initialize strategy IDs to start at 1
+        _nextStrategyId = 1;
     }
 
     /**
      * @notice Creates a new vesting strategy
+     * @param cliffDuration The duration of the cliff period in seconds
+     * @param cliffPercentage The percentage of tokens available during the cliff period
+     * @param vestingDuration The total duration of the vesting period in seconds
+     * @param expiryDate The timestamp when the vesting period ends
+     * @param merkleRoot The merkle root for the strategy
+     * @param claimWithDelay Whether to enable delayed claims
      */
     function createStrategy(
         uint256 cliffDuration,
