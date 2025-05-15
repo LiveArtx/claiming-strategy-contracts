@@ -87,12 +87,6 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         bool isInitialClaim,
         uint256 timestamp
     );
-    event TokensReleased(
-        address indexed user,
-        uint256 indexed strategyId,
-        uint256 amount,
-        uint256 releaseTime
-    );
     event DebugVestingCalculation(
         uint256 elapsed,
         uint256 vestingElapsed,
@@ -183,88 +177,81 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 totalAllocation,
         bytes32[] calldata merkleProof
     ) external nonReentrant {
-        if (_strategies[strategyId].id == 0) revert StrategyNotFound();
-        if (!_strategies[strategyId].isActive) revert StrategyInactive();
+        // Fail fast on cheap checks first
         if (totalAllocation == 0) revert InvalidAmount();
+        
+        // Load strategy into memory to reduce storage reads
+        Strategy memory strategy = _strategies[strategyId];
+        if (strategy.id == 0) revert StrategyNotFound();
+        if (!strategy.isActive) revert StrategyInactive();
 
-        Strategy storage strategy = _strategies[strategyId];
         address user = _msgSender();
         uint256 currentTime = block.timestamp;
 
-        // Get user's vesting info
+        // Get user's vesting info - keep in storage since we need to modify it
         UserVesting storage userInfo = _userVestingInfo[user];
 
-        // Check if user is already participating in a strategy
-        if (userInfo.strategyId != 0 && userInfo.strategyId != strategyId) {
-            revert UserAlreadyInStrategy();
-        }
-
-        // Verify merkle proof
+        // Verify merkle proof early to fail fast if invalid
         bytes32 leaf = keccak256(abi.encodePacked(user, totalAllocation));
         if (!MerkleProof.verify(merkleProof, strategy.merkleRoot, leaf)) {
             revert InvalidMerkleProof();
         }
 
+        // Check if user is already participating in a different strategy
+        if (userInfo.strategyId != 0 && userInfo.strategyId != strategyId) {
+            revert UserAlreadyInStrategy();
+        }
+
         // Handle delayed claim release if user has a delayed claim
         if (userInfo.isDelayedClaim) {
-            if (
-                currentTime < userInfo.delayStartTime + strategy.vestingDuration
-            ) {
-                revert ClaimNotAllowed();
+            uint256 delayedAmount = userInfo.delayedAmount;
+            
+            // If we're past expiry, allow immediate release
+            if (currentTime >= strategy.expiryDate) {
+                // Batch storage writes for delayed claim reset
+                userInfo.delayedAmount = 0;
+                userInfo.delayStartTime = 0;
+                userInfo.isDelayedClaim = false;
+
+                // Transfer tokens from token contract
+                vestingToken.transferFrom(address(vestingToken), user, delayedAmount);
+
+                emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
+                return;
             }
 
-            uint256 delayedAmount = userInfo.delayedAmount;
-
-            // Reset delayed claim state
+            // Otherwise, check if delay period has ended
+            if (currentTime < userInfo.delayStartTime + strategy.vestingDuration && userInfo.claimedAmount == 0) {
+                revert ClaimNotAllowed();
+            }
+            
+            // Batch storage writes for delayed claim reset
             userInfo.delayedAmount = 0;
             userInfo.delayStartTime = 0;
             userInfo.isDelayedClaim = false;
 
-            // Transfer delayed claim tokens from owner to user
-            assert(
-                vestingToken.transferFrom(
-                    address(vestingToken),
-                    user,
-                    delayedAmount
-                )
-            );
+            // Transfer tokens from token contract
+            vestingToken.transferFrom(address(vestingToken), user, delayedAmount);
 
-            emit TokensReleased(user, strategyId, delayedAmount, currentTime);
+            emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
             return;
         }
 
         // For strategies with claimWithDelay, only allow claims at vesting end
         if (strategy.claimWithDelay) {
-            if (currentTime < strategy.startTime + strategy.vestingDuration) {
-                revert ClaimNotAllowed();
+            // Check for existing delayed claim first
+            if (userInfo.isDelayedClaim) {
+                revert DelayedClaimAlreadyActive();
             }
-            // When claiming at vesting end, user gets their full allocation
-            if (userInfo.claimedAmount > 0) revert ClaimNotAllowed();
 
-            // Update user's delayed claim info
             userInfo.delayedAmount = totalAllocation;
             userInfo.delayStartTime = currentTime;
             userInfo.isDelayedClaim = true;
-            userInfo.claimedAmount = totalAllocation;
-            userInfo.lastClaimTime = currentTime;
-            userInfo.cliffClaimed = true;
-
-            // Transfer tokens from owner to user
-            assert(
-                vestingToken.transferFrom(
-                    address(vestingToken),
-                    user,
-                    totalAllocation
-                )
-            );
-
-            emit TokensClaimed(
-                user,
-                strategyId,
-                totalAllocation,
-                true,
-                currentTime
-            );
+            userInfo.claimedAmount = 0;
+            userInfo.lastClaimTime = 0;
+            userInfo.cliffClaimed = false;
+            userInfo.strategyId = strategyId;
+            
             return;
         }
 
@@ -283,17 +270,14 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         // Check if there are any tokens to claim
         if (claimable == 0) revert NoTokensToClaim();
 
-        // Transfer tokens from token contract to user
+        // Transfer tokens from token contract
         vestingToken.transferFrom(address(vestingToken), user, claimable);
 
-        // Update user's vesting info
         userInfo.claimedAmount += claimable;
         userInfo.lastClaimTime = currentTime;
         if (isInitial) {
             userInfo.cliffClaimed = true;
         }
-
-        // Set user's strategy if this is their first claim
         if (userInfo.strategyId == 0) {
             userInfo.strategyId = strategyId;
         }

@@ -263,6 +263,76 @@ Each strategy can be customized by adjusting:
 - Expiry date
 - Merkle root (allowlist)
 
+## Expiry Date Handling
+
+The contract includes special handling for expiry dates:
+
+1. **Strategy Creation**
+   - Expiry date must be in the future when creating a strategy
+   - Attempting to create a strategy with a past expiry date will revert with `InvalidStrategy`
+
+2. **Normal Claims**
+   - After expiry date, users can claim their full remaining allocation
+   - This overrides the normal vesting schedule
+   - Example: If a user has 500 tokens remaining unclaimed after expiry, they can claim all 500 tokens in one transaction
+
+3. **Delayed Claims with Expiry**
+   - Delayed claims can be released immediately after the expiry date
+   - This overrides the normal vesting duration requirement
+   - Example: If a user has a delayed claim of 1000 tokens and the strategy expires, they can claim all tokens immediately
+   - The contract will:
+     1. Check if current time is past expiry date
+     2. If yes, release the full delayed amount
+     3. Reset the delayed claim state
+     4. Transfer tokens to the user
+
+### Example: Delayed Claims with Expiry
+
+Here's how delayed claims work with expiry dates:
+
+```solidity
+// Strategy with delayed claims and expiry
+await vestingStrategy.createStrategy(
+    cliffDuration: 7 days,          // 7-day cliff
+    cliffPercentage: 2000,          // 20% cliff unlock
+    vestingDuration: 180 days,      // 6-month vesting
+    expiryDate: [future timestamp], // Strategy expiry date
+    merkleRoot: [merkle root],
+    claimWithDelay: true           // Enable delayed claims
+);
+
+// Scenario 1: Claim before expiry
+// - User sets up delayed claim
+// - Must wait for full vesting duration
+// - Can only claim after vesting period ends
+
+// Scenario 2: Claim after expiry
+// - User sets up delayed claim
+// - Strategy expires before vesting period ends
+// - User can claim immediately after expiry
+// - No need to wait for vesting period to end
+```
+
+### Important Notes
+
+1. **Expiry Date Priority**
+   - Expiry date takes precedence over vesting schedule
+   - After expiry, users can claim remaining allocation regardless of vesting status
+   - This applies to both normal and delayed claims
+
+2. **Delayed Claims After Expiry**
+   - Delayed claims can be released immediately after expiry
+   - The contract will:
+     - Check if current time is past expiry date
+     - If yes, release the full delayed amount
+     - Reset the delayed claim state
+     - Transfer tokens to the user
+
+3. **Multiple Strategies**
+   - Each strategy has its own expiry date
+   - Expiry of one strategy doesn't affect others
+   - Users can only participate in one strategy at a time
+
 ## Security Considerations
 
 1. **Access Control**
