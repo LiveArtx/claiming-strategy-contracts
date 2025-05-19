@@ -12,9 +12,11 @@ import {Upgrades, Options} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 // https://docs.openzeppelin.com/upgrades-plugins/1.x/api-core#define-reference-contracts
 
 
+// ex: forge script script/DeployClaimingStrategies.s.sol:VestingStrategyDeployScript --rpc-url $RPC_URL --private-key $PK --broadcast 
+
 
 contract VestingStrategyDeployScript is Script {
-    address vestingToken = 0x0000000000000000000000000000000000000000;
+    address vestingToken = 0xcE1BeFb348B6D9C190aAe8C875925987c0e20EDD;
 
     error TransactionFailed(string message);
 
@@ -24,17 +26,13 @@ contract VestingStrategyDeployScript is Script {
         address derivedAddress = vm.addr(privateKey);
         address initialOwner = derivedAddress;
 
-        Options memory opts;
-        opts.unsafeAllow = "external-library-linking";
-
         address proxy = Upgrades.deployTransparentProxy(
             "VestingStrategy.sol:VestingStrategy",
             initialOwner,
             abi.encodeCall(
                 VestingStrategy.initialize,
                 (vestingToken)
-            ),
-            opts
+            )
         );
 
         return VestingStrategy(proxy);
