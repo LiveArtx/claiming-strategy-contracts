@@ -57,7 +57,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     }
 
     // Token being vested
-    IERC20 public vestingToken;
+    IERC20 public _vestingToken;
 
     // Mapping of strategy ID to Strategy
     mapping(uint256 => Strategy) private _strategies;
@@ -67,6 +67,9 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
     // Counter for strategy IDs
     uint256 private _nextStrategyId;
+
+    // Token Approver
+    address private _tokenApprover;
 
     // Events
     event StrategyCreated(
@@ -109,8 +112,9 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     error DelayedClaimNotActive();
     error DelayedClaimLockNotExpired();
 
-    function initialize(address _vestingToken) external initializer {
-        vestingToken = IERC20(_vestingToken);
+    function initialize(address vestingToken_, address tokenApprover_) external initializer {
+        _vestingToken = IERC20(vestingToken_);
+        _tokenApprover = tokenApprover_;
         __Ownable_init(_msgSender());
         __ReentrancyGuard_init();
         _nextStrategyId = 1;
@@ -220,7 +224,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
                 userInfo.isDelayedClaim = false;
 
                 // Transfer tokens from token contract
-                vestingToken.transferFrom(address(vestingToken), user, delayedAmount);
+                _vestingToken.transferFrom(address(_tokenApprover), user, delayedAmount);
 
                 emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
                 return;
@@ -237,7 +241,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             userInfo.isDelayedClaim = false;
 
             // Transfer tokens from token contract
-            vestingToken.transferFrom(address(vestingToken), user, delayedAmount);
+            _vestingToken.transferFrom(address(_tokenApprover), user, delayedAmount);
 
             emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
             return;
@@ -277,7 +281,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         if (claimable == 0) revert NoTokensToClaim();
 
         // Transfer tokens from token contract
-        vestingToken.transferFrom(address(vestingToken), user, claimable);
+        _vestingToken.transferFrom(address(_tokenApprover), user, claimable);
 
         userInfo.claimedAmount += claimable;
         userInfo.lastClaimTime = currentTime;
@@ -503,5 +507,21 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         UserVesting calldata info
     ) external onlyOwner {
         _userVestingInfo[user] = info;
+    }
+
+    /**
+     * @notice Sets the token approver
+     * @param tokenApprover_ Address of the token approver
+     */
+    function setTokenApprover(address tokenApprover_) external onlyOwner {
+        _tokenApprover = tokenApprover_;
+    }
+
+    /**
+     * @notice Sets the vesting token
+     * @param vestingToken_ Address of the vesting token
+     */
+    function setVestingToken(address vestingToken_) external onlyOwner {
+        _vestingToken = IERC20(vestingToken_);
     }
 }

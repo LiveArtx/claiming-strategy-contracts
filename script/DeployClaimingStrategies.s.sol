@@ -17,6 +17,7 @@ import {Upgrades, Options} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 
 contract VestingStrategyDeployScript is Script {
     address vestingToken = 0xcE1BeFb348B6D9C190aAe8C875925987c0e20EDD;
+    address approvalAddress = 0x495D4E2b3C7028Aa592cD2f6781b008dA60c1a07;
 
     error TransactionFailed(string message);
 
@@ -31,7 +32,7 @@ contract VestingStrategyDeployScript is Script {
             initialOwner,
             abi.encodeCall(
                 VestingStrategy.initialize,
-                (vestingToken)
+                (vestingToken, approvalAddress)
             )
         );
 
