@@ -8,6 +8,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import {FixedPointMathLib} from "src/libraries/FixedPointMathLib.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Merkle} from "murky/src/Merkle.sol";
 import "forge-std/console.sol";
 
 // Test reentrancy protection by creating a malicious contract
@@ -46,8 +47,78 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     bool constant CLAIM_WITH_DELAY = false;
     uint256 private strategyId; // Add this to track the strategy ID
 
+    // Allowlist data
+    struct AllowlistEntry {
+        address account;
+        uint256 amount; // Amount in wei
+    }
+
+    AllowlistEntry[] private allowlist;
+    bytes32 private root;
+    mapping(address => bytes32[]) private merkleProofs;
+    Merkle private merkle;
+
     function setUp() public override {
         super.setUp();
+        
+        // Initialize Murky
+        merkle = new Merkle();
+        
+
+        // Initialize allowlist with amounts in wei
+        allowlist = new AllowlistEntry[](32);
+        allowlist[0] = AllowlistEntry(0xA3AE55a26F825778d4F1F5118d9FAfE94044cbcD, 500000 * 1e18);
+        allowlist[1] = AllowlistEntry(0x90D81498270e6AeC61d47334f247004Dcb084592, 500000 * 1e18);
+        allowlist[2] = AllowlistEntry(0x495D4E2b3C7028Aa592cD2f6781b008dA60c1a07, 100500 * 1e18);
+        allowlist[3] = AllowlistEntry(0x6c4d2093eE854Ed4F437Af0841c3CCc1BA29C6a3, 500000 * 1e18);
+        allowlist[4] = AllowlistEntry(0xb7DDD470426ddfF5D2c5e28e18B16CFF29AD1C53, 600000 * 1e18);
+        allowlist[5] = AllowlistEntry(0x8dac4f0cee9b4Ffea9A2EAcC70aB1b0E3cE30501, 500000 * 1e18);
+        allowlist[6] = AllowlistEntry(0xAbc997662A1A4D0599C5837A138cC239f25C28ae, 500000 * 1e18);
+        allowlist[7] = AllowlistEntry(0xcb908079C11AA5b3b8c2Bae48ffF2a1af9eEb4de, 500000 * 1e18);
+        allowlist[8] = AllowlistEntry(0xf90Ed810D103F583C53b5eBdaCA3eE631C108cf2, 500000 * 1e18);
+        allowlist[9] = AllowlistEntry(0x50787A8689909EbBD8f17dbB83cBF264AA7c4821, 500000 * 1e18);
+        allowlist[10] = AllowlistEntry(0x2787BA59d11E7524dE94F4Eda44C5b08A78803B0, 500000 * 1e18);
+        allowlist[11] = AllowlistEntry(0x97DDc69e15E204Dd041304b06E90Fb0DCDdb27Ef, 500000 * 1e18);
+        allowlist[12] = AllowlistEntry(0xb934814e6F6fc7f5Aa0ED69b78916e42F631A9A2, 500000 * 1e18);
+        allowlist[13] = AllowlistEntry(0x00bF12BAAf90E4a989cD1F0753800fB025131564, 500000 * 1e18);
+        allowlist[14] = AllowlistEntry(0x69B1528307B95A7DF7ac34C7b305a55B3f3Aa29b, 500000 * 1e18);
+        allowlist[15] = AllowlistEntry(0xfF3046B569217A9D32b736E72Bca13250b3bD8b4, 500000 * 1e18);
+        allowlist[16] = AllowlistEntry(0xB2B5C087F7e4d40BfA254D77B34451A52fcD7E35, 500000 * 1e18);
+        allowlist[17] = AllowlistEntry(0x5890E7020Ef8b7D05A9d7EF4AAaE2C7a4277E0c0, 500000 * 1e18);
+        allowlist[18] = AllowlistEntry(0xbcE61ff613e0DFCB3a5a30A36237Df9CB3872E6F, 500000 * 1e18);
+        allowlist[19] = AllowlistEntry(claimer1, CLAIM_AMOUNT);
+        allowlist[20] = AllowlistEntry(0x702E5a03B3d7625ae99f7067d157D06Ad224fa91, 500000 * 1e18);
+        allowlist[21] = AllowlistEntry(0x1ed3a8768624ae6d7BfF537775F2EF5BDA846928, 500000 * 1e18);
+        allowlist[22] = AllowlistEntry(0x7dB62c7FE2fEf297bBfa76e54C49C7Ce7870bCa6, 500000 * 1e18);
+        allowlist[23] = AllowlistEntry(0xEDc2081b451c1aF0754F06fdDC7267773f4936D6, 500000 * 1e18);
+        allowlist[24] = AllowlistEntry(0x5b6AcCE8B882493b2b7CA6acCF53745c4dF1e283, 500000 * 1e18);
+        allowlist[25] = AllowlistEntry(0x03f48714E86be629a8A76d04178D438465912399, 500000 * 1e18);
+        allowlist[26] = AllowlistEntry(0xaa862C6bd08B27361E0cd952F292Cd8acae246bb, 510000 * 1e18);
+        allowlist[27] = AllowlistEntry(0xa040D46c4237f99fe05aa38035889A612C8417a7, 500000 * 1e18);
+        allowlist[28] = AllowlistEntry(0x202ef3Abd8402C72D74f4354c54f9E72F4fB0049, 500000 * 1e18);
+        allowlist[29] = AllowlistEntry(0x6234937A4b3db79CfA13A36d0a40b4E398e289b8, 500000 * 1e18);
+        allowlist[30] = AllowlistEntry(0xCf17635F4d5F51841C98f04c1c54532D974E19A0, 500000 * 1e18);
+
+        // Build merkle tree using Murky
+        bytes32[] memory leaves = new bytes32[](allowlist.length);
+        for (uint256 i = 0; i < allowlist.length; i++) {
+            leaves[i] = keccak256(abi.encodePacked(allowlist[i].account, allowlist[i].amount));
+        }
+        root = merkle.getRoot(leaves);
+
+        // Generate proofs for each address using Murky
+        for (uint256 i = 0; i < allowlist.length; i++) {
+            console.log("");
+            console.log(allowlist[i].account);
+            bytes32[] memory proof = merkle.getProof(leaves, i);
+            for (uint256 j = 0; j < proof.length; j++) {
+                console.logBytes32(proof[j]);
+            }
+            console.log("");
+
+            merkleProofs[allowlist[i].account] = proof;
+        }
+
 
         // Create a strategy
         vm.startPrank(deployer);
@@ -57,24 +128,55 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
-            MERKLE_ROOT,
+            root, // Use our merkle root
             CLAIM_WITH_DELAY
         );
-        // Strategy ID will be 1 since we initialize _nextStrategyId to 1
         strategyId = 1;
+
+        // Update the merkle root in the strategy to match our tree
+        vestingStrategy.updateMerkleRoot(strategyId, root);
+
         // Mint tokens to token approver and approve vesting contract
-        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT);
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT * 100); // Mint enough for all claims
         vm.startPrank(tokenApprover);
-        mockERC20Token.approve(address(vestingStrategy), type(uint256).max); // Approve max amount
+        mockERC20Token.approve(address(vestingStrategy), type(uint256).max);
         vm.stopPrank();
         vm.stopPrank();
     }
 
+    function _getClaimerDetails(address claimer) internal view returns (bytes32, bytes32[] memory) {
+        bytes32 leaf = keccak256(abi.encodePacked(claimer, _getAllocation(claimer)));
+        return (root, merkleProofs[claimer]);
+    }
+
+    // Override parent's _claimerDetails to use our own merkle tree
+    function _claimerDetails() internal view returns (bytes32, bytes32[] memory) {
+        return _getClaimerDetails(claimer1);
+    }
+
+    // Helper function to get allocation for an address
+    function _getAllocation(address account) internal view returns (uint256) {
+        for (uint256 i = 0; i < allowlist.length; i++) {
+            if (allowlist[i].account == account) {
+                return allowlist[i].amount;
+            }
+        }
+        return 0;
+    }
+
     function test_should_claim_initial_cliff_amount_and_update_vesting_info() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+
+        console.log("address", claimer1);
+        console.log("allocation", _getAllocation(claimer1));
+        console.logBytes32(root);
+        console.log("Merkle proof length", merkleProof.length);
+        for (uint256 i = 0; i < merkleProof.length; i++) {
+            console.logBytes32(merkleProof[i]);
+        }
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -110,10 +212,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_claim_linear_vesting_amounts_daily_after_cliff() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -180,10 +282,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_vest_correctly_daily_over_entire_vesting_period_after_cliff() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -291,10 +393,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     function test_should_vest_correctly_in_10_day_intervals_over_entire_period()
         public
     {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -374,10 +476,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_claim_remaining_amount_at_vesting_period_end() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -436,10 +538,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_handle_claims_at_cliff_end_and_vesting_end_boundaries() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -486,10 +588,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_revert_when_attempting_to_claim_again_within_24h_during_cliff() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         // Get strategy for calculations
@@ -512,10 +614,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_transfer_tokens_from_token_contract_to_user() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -567,10 +669,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_revert_when_token_contract_has_insufficient_allowance() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         // Clear token approver's max approval and set insufficient approval
@@ -616,10 +718,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_revert_when_merkle_proof_is_invalid() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -646,10 +748,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         uint256 strategyId2 = 2;
 
         // Setup first strategy
-        (bytes32 merkleRoot1, bytes32[] memory merkleProof1) = _claimerDetails();
+        (bytes32 root1, bytes32[] memory merkleProof1) = _claimerDetails();
         mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT * 2);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot1);
-        vestingStrategy.updateMerkleRoot(strategyId2, merkleRoot1);
+        vestingStrategy.updateMerkleRoot(strategyId, root1);
+        vestingStrategy.updateMerkleRoot(strategyId2, root1);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -688,7 +790,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
         uint256 secondStrategyId = 3;
 
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
         // Approve vesting contract to spend tokens from token contract
         vm.startPrank(tokenApprover);
         mockERC20Token.approve(address(vestingStrategy), type(uint256).max);
@@ -696,8 +798,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.stopPrank();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(delayedStrategyId, merkleRoot);
-        vestingStrategy.updateMerkleRoot(secondStrategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(delayedStrategyId, root);
+        vestingStrategy.updateMerkleRoot(secondStrategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -767,7 +869,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
         uint256 secondStrategyId = 3;
 
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
         
         // Mint additional tokens to token approver for both strategies
         vm.startPrank(tokenApprover);
@@ -775,8 +877,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.stopPrank();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(delayedExpiryStrategyId, merkleRoot);
-        vestingStrategy.updateMerkleRoot(secondStrategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(delayedExpiryStrategyId, root);
+        vestingStrategy.updateMerkleRoot(secondStrategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -901,7 +1003,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Verify no tokens can be claimed before start time
         vm.stopPrank();
         vm.startPrank(claimer1);
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
         
         // Try to claim before start time
         vm.warp(futureStartTime - 1 days);
@@ -924,10 +1026,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_revert_when_claiming_inactive_strategy() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vestingStrategy.updateStrategyStatus(strategyId, false);
         vm.stopPrank();
 
@@ -937,10 +1039,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_revert_when_claiming_zero_amount() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -949,7 +1051,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_revert_when_claiming_nonexistent_strategy() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(claimer1);
         vm.expectRevert(VestingStrategy.StrategyNotFound.selector);
@@ -972,13 +1074,13 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
         uint256 delayedStrategyId = 2;
 
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
         vm.startPrank(tokenApprover);
         mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT);
         vm.stopPrank();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(delayedStrategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(delayedStrategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
