@@ -122,6 +122,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
     /**
      * @notice Creates a new vesting strategy
+     * @param startTime The timestamp when the vesting period starts
      * @param cliffDuration The duration of the cliff period in seconds
      * @param cliffPercentage The percentage of tokens available during the cliff period
      * @param vestingDuration The total duration of the vesting period in seconds
@@ -130,6 +131,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
      * @param claimWithDelay Whether to enable delayed claims
      */
     function createStrategy(
+        uint256 startTime,
         uint256 cliffDuration,
         uint256 cliffPercentage,
         uint256 vestingDuration,
@@ -139,10 +141,11 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     ) external onlyOwner {
         if (cliffPercentage > BASIS_POINTS) revert InvalidUnlockPercentages();
         if (expiryDate <= block.timestamp) revert InvalidStrategy();
+        if (startTime >= expiryDate) revert InvalidStrategy();
+        if (startTime + vestingDuration > expiryDate) revert InvalidStrategy();
 
         uint256 strategyId = _nextStrategyId;
         _nextStrategyId++;
-        uint256 startTime = block.timestamp;
 
         _strategies[strategyId] = Strategy({
             id: strategyId,
@@ -173,35 +176,56 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
      * @param strategyId ID of the strategy
      * @param totalAllocation Total amount of tokens allocated
      * @param merkleProof Merkle proof for the user's allocation
-     * @dev This function will:
-     *      1. Verify the merkle proof
-     *      2. Calculate claimable amount based on vesting schedule
-     *      3. Either:
-     *         a. Transfer tokens immediately (if claimWithDelay is false)
-     *         b. Lock tokens until vesting period ends (if claimWithDelay is true)
-     *      Note: The contract must have sufficient token balance or allowance
-     *      Note: Users can only participate in one strategy at a time
      */
     function claim(
         uint256 strategyId,
         uint256 totalAllocation,
         bytes32[] calldata merkleProof
     ) external nonReentrant {
-        // Fail fast on cheap checks first
+        _validateClaim(strategyId, totalAllocation, merkleProof);
+
+        address user = _msgSender();
+        uint256 currentTime = block.timestamp;
+        UserVesting storage userInfo = _userVestingInfo[user];
+        Strategy memory strategy = _strategies[strategyId];
+
+        // Handle delayed claim release if user has a delayed claim
+        if (userInfo.isDelayedClaim) {
+            _handleDelayedClaim(user, strategyId, userInfo, strategy, currentTime);
+            return;
+        }
+
+        // For strategies with claimWithDelay, handle initial delayed claim setup
+        if (strategy.claimWithDelay) {
+            _handleInitialDelayedClaim(strategyId, totalAllocation, userInfo);
+            return;
+        }
+
+        // Handle normal claim (either initial or subsequent)
+        _handleNormalClaim(user, strategyId, totalAllocation, userInfo, strategy, currentTime);
+    }
+
+    /**
+     * @notice Validates basic claim parameters
+     * @param strategyId ID of the strategy
+     * @param totalAllocation Total amount of tokens allocated
+     * @param merkleProof Merkle proof for the user's allocation
+     */
+    function _validateClaim(
+        uint256 strategyId,
+        uint256 totalAllocation,
+        bytes32[] calldata merkleProof
+    ) internal view {
         if (totalAllocation == 0) revert InvalidAmount();
         
-        // Load strategy into memory to reduce storage reads
         Strategy memory strategy = _strategies[strategyId];
         if (strategy.id == 0) revert StrategyNotFound();
         if (!strategy.isActive) revert StrategyInactive();
 
         address user = _msgSender();
-        uint256 currentTime = block.timestamp;
-
-        // Get user's vesting info - keep in storage since we need to modify it
         UserVesting storage userInfo = _userVestingInfo[user];
 
-        // Verify merkle proof early to fail fast if invalid
+        // Verify merkle proof
         bytes32 leaf = keccak256(abi.encodePacked(user, totalAllocation));
         if (!MerkleProof.verify(merkleProof, strategy.merkleRoot, leaf)) {
             revert InvalidMerkleProof();
@@ -211,61 +235,78 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         if (userInfo.strategyId != 0 && userInfo.strategyId != strategyId) {
             revert UserAlreadyInStrategy();
         }
+    }
 
-        // Handle delayed claim release if user has a delayed claim
-        if (userInfo.isDelayedClaim) {
-            uint256 delayedAmount = userInfo.delayedAmount;
-            
-            // If we're past expiry, allow immediate release
-            if (currentTime >= strategy.expiryDate) {
-                // Batch storage writes for delayed claim reset
-                userInfo.delayedAmount = 0;
-                userInfo.delayStartTime = 0;
-                userInfo.isDelayedClaim = false;
-
-                // Transfer tokens from token contract
-                _vestingToken.transferFrom(address(_tokenApprover), user, delayedAmount);
-
-                emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
-                return;
-            }
-
-            // Otherwise, check if delay period has ended
-            if (currentTime < userInfo.delayStartTime + strategy.vestingDuration && userInfo.claimedAmount == 0) {
-                revert ClaimNotAllowed();
-            }
-            
-            // Batch storage writes for delayed claim reset
-            userInfo.delayedAmount = 0;
-            userInfo.delayStartTime = 0;
-            userInfo.isDelayedClaim = false;
-
-            // Transfer tokens from token contract
+    /**
+     * @notice Handles the release of a delayed claim
+     * @param user Address of the user
+     * @param strategyId ID of the strategy
+     * @param userInfo User's vesting information
+     * @param strategy Strategy information
+     * @param currentTime Current timestamp
+     */
+    function _handleDelayedClaim(
+        address user,
+        uint256 strategyId,
+        UserVesting storage userInfo,
+        Strategy memory strategy,
+        uint256 currentTime
+    ) internal {
+        uint256 delayedAmount = userInfo.delayedAmount;
+        
+        // If we're past expiry, allow immediate release
+        if (currentTime >= strategy.expiryDate) {
             _vestingToken.transferFrom(address(_tokenApprover), user, delayedAmount);
-
             emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
             return;
         }
 
-        // For strategies with claimWithDelay, only allow claims at vesting end
-        if (strategy.claimWithDelay) {
-            // Check for existing delayed claim first
-            if (userInfo.isDelayedClaim) {
-                revert DelayedClaimAlreadyActive();
-            }
-
-            userInfo.delayedAmount = totalAllocation;
-            userInfo.delayStartTime = currentTime;
-            userInfo.isDelayedClaim = true;
-            userInfo.claimedAmount = 0;
-            userInfo.lastClaimTime = 0;
-            userInfo.cliffClaimed = false;
-            userInfo.strategyId = strategyId;
-            
-            return;
+        // Otherwise, check if delay period has ended
+        if (currentTime < userInfo.delayStartTime + strategy.vestingDuration && userInfo.claimedAmount == 0) {
+            revert ClaimNotAllowed();
         }
+        
+        _vestingToken.transferFrom(address(_tokenApprover), user, delayedAmount);
+        emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
+    }
 
-        // Normal claim process for strategies without claimWithDelay
+    /**
+     * @notice Handles the initial setup of a delayed claim
+     * @param strategyId ID of the strategy
+     * @param totalAllocation Total allocation for the user
+     * @param userInfo User's vesting information
+     */
+    function _handleInitialDelayedClaim(
+        uint256 strategyId,
+        uint256 totalAllocation,
+        UserVesting storage userInfo
+    ) internal {
+        userInfo.delayedAmount = totalAllocation;
+        userInfo.delayStartTime = block.timestamp;
+        userInfo.isDelayedClaim = true;
+        userInfo.claimedAmount = 0;
+        userInfo.lastClaimTime = 0;
+        userInfo.cliffClaimed = false;
+        userInfo.strategyId = strategyId;
+    }
+
+    /**
+     * @notice Handles normal claims (initial or subsequent)
+     * @param user Address of the user
+     * @param strategyId ID of the strategy
+     * @param totalAllocation Total allocation for the user
+     * @param userInfo User's vesting information
+     * @param strategy Strategy information
+     * @param currentTime Current timestamp
+     */
+    function _handleNormalClaim(
+        address user,
+        uint256 strategyId,
+        uint256 totalAllocation,
+        UserVesting storage userInfo,
+        Strategy memory strategy,
+        uint256 currentTime
+    ) internal {
         // Check if enough time has passed since last claim (minimum 1 day)
         if (userInfo.lastClaimTime > 0 && currentTime < userInfo.lastClaimTime + 1 days) {
             revert NoTokensToClaim();
@@ -323,6 +364,11 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         Strategy storage strategy = _strategies[strategyId];
         UserVesting storage userInfo = _userVestingInfo[user];
         uint256 currentTime = block.timestamp;
+
+        // Return 0 if we're before the start time
+        if (currentTime < strategy.startTime) {
+            return (0, false);
+        }
 
         // For strategies with claimWithDelay, only allow claims at vesting end
         if (strategy.claimWithDelay) {

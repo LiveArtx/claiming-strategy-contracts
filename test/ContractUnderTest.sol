@@ -23,6 +23,7 @@ abstract contract ContractUnderTest is Test {
     address payable claimer2 = payable(makeAddr("claimer2"));
     address payable unauthorizedUser = payable(makeAddr("unauthorizedUser"));
     address payable failedReceiver;
+    address payable tokenApprover = payable(makeAddr("tokenApprover"));
 
     // Constants
     uint256 public CLAIM_AMOUNT = 1000 * 10 ** 18;
@@ -54,7 +55,7 @@ abstract contract ContractUnderTest is Test {
         mockERC20Token = new MockERC20Token();
         mockERC20Token.mint(address(vestingStrategy), INITIAL_MINT_AMOUNT);
 
-        vestingStrategy.initialize(address(mockERC20Token));
+        vestingStrategy.initialize(address(mockERC20Token), tokenApprover);
 
         vm.label({account: address(mockERC20Token), newLabel: "MockArtToken"});
 

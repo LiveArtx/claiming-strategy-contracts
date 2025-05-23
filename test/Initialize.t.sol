@@ -12,7 +12,7 @@ contract VestingStrategy_Initialize_Test is ContractUnderTest {
 
     function test_should_set_vesting_token_correctly() public view {
         assertEq(
-            address(vestingStrategy.vestingToken()),
+            address(vestingStrategy._vestingToken()),
             address(mockERC20Token)
         );
     }
@@ -23,7 +23,7 @@ contract VestingStrategy_Initialize_Test is ContractUnderTest {
 
     function test_should_revert_if_already_initialized() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        vestingStrategy.initialize(address(mockERC20Token));
+        vestingStrategy.initialize(address(mockERC20Token), tokenApprover);
     }
 
 }

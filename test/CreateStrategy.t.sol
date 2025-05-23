@@ -23,6 +23,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         
         // Create strategy
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -50,6 +51,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user1));
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -64,6 +66,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         
         vm.expectRevert(VestingStrategy.InvalidUnlockPercentages.selector);
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             10001, // 100.01%
             VESTING_DURATION,
@@ -78,6 +81,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         
         vm.expectRevert(VestingStrategy.InvalidStrategy.selector);
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -92,6 +96,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         
         // Create first strategy
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -102,6 +107,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
 
         // Create second strategy
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -132,6 +138,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         );
 
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -145,6 +152,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         vm.startPrank(deployer);
         
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -162,6 +170,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         vm.startPrank(deployer);
         
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             0, // No cliff
             0, // No cliff percentage
             VESTING_DURATION,
@@ -181,6 +190,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         
         // Create a strategy first
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,

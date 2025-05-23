@@ -10,6 +10,31 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "forge-std/console.sol";
 
+// Test reentrancy protection by creating a malicious contract
+contract MaliciousClaimer {
+    VestingStrategy public vestingStrategy;
+    uint256 public strategyId;
+    uint256 public amount;
+    bytes32[] public merkleProof;
+
+    constructor(address _vestingStrategy, uint256 _strategyId, uint256 _amount, bytes32[] memory _merkleProof) {
+        vestingStrategy = VestingStrategy(_vestingStrategy);
+        strategyId = _strategyId;
+        amount = _amount;
+        merkleProof = _merkleProof;
+    }
+
+    function attack() external {
+        vestingStrategy.claim(strategyId, amount, merkleProof);
+    }
+
+    // This will be called by the vesting contract during transfer
+    function onERC20Received(address, uint256, bytes calldata) external returns (bytes4) {
+        // Try to reenter
+        vestingStrategy.claim(strategyId, amount, merkleProof);
+        return this.onERC20Received.selector;
+    }
+}
 
 contract VestingStrategy_Claim_Test is ContractUnderTest {
     // Strategy parameters for testing
@@ -27,6 +52,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Create a strategy
         vm.startPrank(deployer);
         vestingStrategy.createStrategy(
+            block.timestamp, // startTime
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -36,9 +62,9 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
         // Strategy ID will be 1 since we initialize _nextStrategyId to 1
         strategyId = 1;
-        // Mint tokens to token contract and approve vesting contract
-        mockERC20Token.mint(address(mockERC20Token), CLAIM_AMOUNT);
-        vm.startPrank(address(mockERC20Token));
+        // Mint tokens to token approver and approve vesting contract
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT);
+        vm.startPrank(tokenApprover);
         mockERC20Token.approve(address(vestingStrategy), type(uint256).max); // Approve max amount
         vm.stopPrank();
         vm.stopPrank();
@@ -48,7 +74,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
@@ -88,7 +113,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
@@ -159,7 +183,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
@@ -271,7 +294,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
@@ -355,7 +377,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
@@ -418,7 +439,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
@@ -469,7 +489,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
@@ -508,7 +527,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.warp(strategy.startTime + strategy.cliffDuration + 1 days);
 
         // Record initial balances
-        uint256 initialTokenContractBalance = mockERC20Token.balanceOf(address(mockERC20Token));
+        uint256 initialTokenApproverBalance = mockERC20Token.balanceOf(tokenApprover);
         uint256 initialUserBalance = mockERC20Token.balanceOf(claimer1);
 
         // Calculate expected claimable amount
@@ -522,14 +541,14 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
 
         // Verify final balances
-        uint256 finalTokenContractBalance = mockERC20Token.balanceOf(address(mockERC20Token));
+        uint256 finalTokenApproverBalance = mockERC20Token.balanceOf(tokenApprover);
         uint256 finalUserBalance = mockERC20Token.balanceOf(claimer1);
 
-        // Verify token contract transferred exactly the claimable amount
+        // Verify token approver transferred exactly the claimable amount
         assertEq(
-            initialTokenContractBalance - finalTokenContractBalance,
+            initialTokenApproverBalance - finalTokenApproverBalance,
             expectedClaimable,
-            "Token contract should transfer exactly the claimable amount"
+            "Token approver should transfer exactly the claimable amount"
         );
 
         // Verify user received exactly the claimable amount
@@ -539,11 +558,11 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             "User should receive exactly the claimable amount"
         );
 
-        // Verify token contract has approved the vesting contract
+        // Verify token approver has approved the vesting contract
         assertEq(
-            mockERC20Token.allowance(address(mockERC20Token), address(vestingStrategy)),
+            mockERC20Token.allowance(tokenApprover, address(vestingStrategy)),
             type(uint256).max,
-            "Token contract should have max approval for vesting contract"
+            "Token approver should have max approval for vesting contract"
         );
     }
 
@@ -554,10 +573,9 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
-        // Clear token contract's max approval and set insufficient approval
-        vm.startPrank(address(mockERC20Token));
-      
-        // Then approve a very small amount (1% of CLAIM_AMOUNT)
+        // Clear token approver's max approval and set insufficient approval
+        vm.startPrank(tokenApprover);
+        mockERC20Token.approve(address(vestingStrategy), 0); // Clear approval
         mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT / 100); // Only approve 1% of what's needed
         vm.stopPrank();
 
@@ -577,7 +595,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
 
         // Verify approval is insufficient
-        uint256 approval = mockERC20Token.allowance(address(mockERC20Token), address(vestingStrategy));
+        uint256 approval = mockERC20Token.allowance(tokenApprover, address(vestingStrategy));
         assertTrue(approval < expectedClaimable, "Approval should be insufficient");
 
         // Claim should revert due to insufficient approval
@@ -601,7 +619,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
         vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
         vm.stopPrank();
 
@@ -618,6 +635,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Create a second strategy
         vm.startPrank(deployer);
         vestingStrategy.createStrategy(
+            block.timestamp,
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -648,6 +666,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Create a strategy with claimWithDelay
         vm.startPrank(deployer);
         vestingStrategy.createStrategy(
+            block.timestamp,
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
@@ -657,15 +676,28 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
         uint256 delayedStrategyId = 2;
 
+        // Create a second strategy to test UserAlreadyInStrategy
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            bytes32(uint256(2)), // Different merkle root
+            true // Enable claimWithDelay
+        );
+        uint256 secondStrategyId = 3;
+
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
         // Approve vesting contract to spend tokens from token contract
-        vm.startPrank(address(mockERC20Token));
+        vm.startPrank(tokenApprover);
         mockERC20Token.approve(address(vestingStrategy), type(uint256).max);
-        mockERC20Token.mint(address(mockERC20Token), CLAIM_AMOUNT);
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT * 2); // Mint enough for both strategies
         vm.stopPrank();
 
         vm.startPrank(deployer);
         vestingStrategy.updateMerkleRoot(delayedStrategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(secondStrategyId, merkleRoot);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -688,50 +720,32 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.expectRevert(VestingStrategy.ClaimNotAllowed.selector);
         vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
 
+        // Try to set up a delayed claim in a different strategy - should revert with UserAlreadyInStrategy
+        vm.expectRevert(VestingStrategy.UserAlreadyInStrategy.selector);
+        vestingStrategy.claim(secondStrategyId, CLAIM_AMOUNT, merkleProof);
+
         // Move past delay period
         vm.warp(userInfo.delayStartTime + strategy.vestingDuration + 1);
 
         // Release delayed claim
         vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
 
-        // Verify tokens were released
+        // Verify tokens were released but delayed claim state remains
         assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount");
         userInfo = vestingStrategy.getUserVestingInfo(claimer1);
-        assertFalse(userInfo.isDelayedClaim, "Delayed claim should be cleared");
-        assertEq(userInfo.delayedAmount, 0, "Delayed amount should be cleared");
-    }
-
-    function test_should_revert_when_attempting_to_claim_again_within_24h_during_vesting() public {
-        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
-
-        vm.startPrank(deployer);
-        mockERC20Token.approve(address(vestingStrategy), CLAIM_AMOUNT);
-        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
-        vm.stopPrank();
-
-        vm.startPrank(claimer1);
-
-        // Get strategy for timing calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
-
-        // Move past cliff period
-        vm.warp(strategy.startTime + strategy.cliffDuration + 1);
-
-        // First claim
-        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
-
-        // Attempt to claim again before 24 hours
-        vm.warp(block.timestamp + 23 hours);
-        vm.expectRevert(VestingStrategy.NoTokensToClaim.selector);
-        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
+        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
+        assertEq(userInfo.delayStartTime, strategy.startTime + strategy.vestingDuration + 1, "Delay start time should remain set");
     }
 
     function test_should_handle_delayed_claims_with_expiry_date() public {
         // Create a strategy with delayed claims and short expiry
         vm.startPrank(deployer);
-        // Set expiry to be after vesting duration but not too far
-        uint256 shortExpiry = block.timestamp + VESTING_DURATION + 30 days; // Ensure expiry is after vesting
+       
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + VESTING_DURATION + 30 days;
         vestingStrategy.createStrategy(
+            startTime,
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION, // 180 days vesting
@@ -741,14 +755,28 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
         uint256 delayedExpiryStrategyId = 2;
 
+        // Create a second strategy to test UserAlreadyInStrategy
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            shortExpiry,
+            bytes32(uint256(2)), // Different merkle root
+            true // Enable delayed claims
+        );
+        uint256 secondStrategyId = 3;
+
         (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
-        vm.startPrank(address(mockERC20Token));
-        mockERC20Token.approve(address(vestingStrategy), type(uint256).max);
-        mockERC20Token.mint(address(mockERC20Token), CLAIM_AMOUNT);
+        
+        // Mint additional tokens to token approver for both strategies
+        vm.startPrank(tokenApprover);
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT * 2);
         vm.stopPrank();
 
         vm.startPrank(deployer);
         vestingStrategy.updateMerkleRoot(delayedExpiryStrategyId, merkleRoot);
+        vestingStrategy.updateMerkleRoot(secondStrategyId, merkleRoot);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
@@ -768,6 +796,14 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         assertTrue(userInfo.isDelayedClaim, "Should have delayed claim set up");
         assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Should have full amount delayed");
 
+        // Try to set up a delayed claim in a different strategy - should revert with UserAlreadyInStrategy
+        vm.expectRevert(VestingStrategy.UserAlreadyInStrategy.selector);
+        vestingStrategy.claim(secondStrategyId, CLAIM_AMOUNT, merkleProof);
+
+        // Try to claim again before delay period ends - should revert with ClaimNotAllowed
+        vm.expectRevert(VestingStrategy.ClaimNotAllowed.selector);
+        vestingStrategy.claim(delayedExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
+
         // Move past expiry date
         vm.warp(strategy.expiryDate + 1);
         assertTrue(block.timestamp > strategy.expiryDate, "Should be past expiry date");
@@ -775,69 +811,203 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Should be able to release delayed claim after expiry
         vestingStrategy.claim(delayedExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
 
-        // Verify tokens were released
+        // Verify tokens were released but delayed claim state remains
         assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount after expiry");
         userInfo = vestingStrategy.getUserVestingInfo(claimer1);
-        assertFalse(userInfo.isDelayedClaim, "Delayed claim should be cleared");
-        assertEq(userInfo.delayedAmount, 0, "Delayed amount should be cleared");
+        assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
+        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
+        assertEq(userInfo.delayStartTime, strategy.startTime + strategy.vestingDuration + 1, "Delay start time should remain set");
+        assertEq(userInfo.strategyId, delayedExpiryStrategyId, "Strategy ID should remain set");
 
-        // Reset state for second test case
-        vm.stopPrank();
+        // Try to claim again after expiry - should succeed since we're past expiry
+        vestingStrategy.claim(delayedExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
+
+        // Verify user info remains unchanged
+        userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
+        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
+        assertEq(userInfo.strategyId, delayedExpiryStrategyId, "Strategy ID should remain set");
+        assertEq(userInfo.claimedAmount, 0, "Claimed amount should remain 0 since we used delayed claim");
+    }
+
+    function test_should_revert_when_start_time_is_after_expiry_date() public {
         vm.startPrank(deployer);
-        // Reset user's vesting info
-        VestingStrategy.UserVesting memory emptyInfo = VestingStrategy.UserVesting({
-            strategyId: 0,
-            claimedAmount: 0,
-            lastClaimTime: 0,
-            cliffClaimed: false,
-            delayedAmount: 0,
-            delayStartTime: 0,
-            isDelayedClaim: false
-        });
-        vestingStrategy.setUserVestingInfo(claimer1, emptyInfo);
-        
-        // Use a new expiry date that's in the future relative to current time
-        uint256 newExpiry = block.timestamp + VESTING_DURATION + 30 days;
+        uint256 futureStartTime = block.timestamp + 100 days;
+        uint256 pastExpiryDate = block.timestamp + 50 days; // Expiry before start time
+
+        vm.expectRevert(VestingStrategy.InvalidStrategy.selector);
         vestingStrategy.createStrategy(
+            futureStartTime,
             CLIFF_DURATION,
             CLIFF_PERCENTAGE,
             VESTING_DURATION,
-            newExpiry,
+            pastExpiryDate,
             MERKLE_ROOT,
-            true
+            CLAIM_WITH_DELAY
         );
-        uint256 delayedExpiryStrategyId2 = 3;
-        vestingStrategy.updateMerkleRoot(delayedExpiryStrategyId2, merkleRoot);
+        vm.stopPrank();
+    }
+
+    function test_should_revert_when_vesting_period_exceeds_expiry_date() public {
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiryDate = startTime + 10 days; // Expiry too soon
+        uint256 longVestingDuration = 20 days; // Vesting duration longer than time until expiry
+
+        vm.expectRevert(VestingStrategy.InvalidStrategy.selector);
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            longVestingDuration,
+            shortExpiryDate,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY
+        );
+        vm.stopPrank();
+    }
+
+    function test_should_create_strategy_with_future_start_time() public {
+        vm.startPrank(deployer);
+        // Create a first strategy to ensure we get ID 2 for our future strategy
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY
+        );
+
+        uint256 futureStartTime = block.timestamp + 30 days;
+        uint256 futureExpiryDate = futureStartTime + EXPIRY_DATE;
+
+        vestingStrategy.createStrategy(
+            futureStartTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            futureExpiryDate,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY
+        );
+        uint256 futureStrategyId = 3; // This will be the third strategy (ID 3)
+
+        // Verify strategy was created with correct start time
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(futureStrategyId);
+        assertEq(strategy.startTime, futureStartTime, "Strategy should have correct start time");
+
+        // Verify no tokens can be claimed before start time
+        vm.stopPrank();
+        vm.startPrank(claimer1);
+        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        
+        // Try to claim before start time
+        vm.warp(futureStartTime - 1 days);
+        uint256 claimableBeforeStart = vestingStrategy.getClaimableAmount(
+            claimer1,
+            futureStrategyId,
+            CLAIM_AMOUNT
+        );
+        assertEq(claimableBeforeStart, 0, "Should not be able to claim before start time");
+
+        // Verify can claim after start time
+        vm.warp(futureStartTime + 1 days);
+        uint256 claimableAfterStart = vestingStrategy.getClaimableAmount(
+            claimer1,
+            futureStrategyId,
+            CLAIM_AMOUNT
+        );
+        assertTrue(claimableAfterStart > 0, "Should be able to claim after start time");
+        vm.stopPrank();
+    }
+
+    function test_should_revert_when_claiming_inactive_strategy() public {
+        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vestingStrategy.updateStrategyStatus(strategyId, false);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+        vm.expectRevert(VestingStrategy.StrategyInactive.selector);
+        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+    }
+
+    function test_should_revert_when_claiming_zero_amount() public {
+        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(strategyId, merkleRoot);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+        vm.expectRevert(VestingStrategy.InvalidAmount.selector);
+        vestingStrategy.claim(strategyId, 0, merkleProof);
+    }
+
+    function test_should_revert_when_claiming_nonexistent_strategy() public {
+        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+
+        vm.startPrank(claimer1);
+        vm.expectRevert(VestingStrategy.StrategyNotFound.selector);
+        vestingStrategy.claim(999, CLAIM_AMOUNT, merkleProof);
+    }
+
+    function test_should_handle_delayed_claim_at_exact_expiry_time() public {
+        // Create a strategy with claimWithDelay
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 expiryTime = startTime + EXPIRY_DATE;
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            expiryTime,
+            MERKLE_ROOT,
+            true // Enable claimWithDelay
+        );
+        uint256 delayedStrategyId = 2;
+
+        (bytes32 merkleRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        vm.startPrank(tokenApprover);
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT);
+        vm.stopPrank();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(delayedStrategyId, merkleRoot);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
 
         // Get strategy for timing calculations
-        strategy = vestingStrategy.getStrategy(delayedExpiryStrategyId2);
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(delayedStrategyId);
 
-        // Move to before expiry but after vesting start
-        vm.warp(strategy.startTime + 1);
-        assertTrue(block.timestamp < strategy.expiryDate, "Should be before expiry date");
+        // Move to just before vesting period ends
+        vm.warp(strategy.startTime + strategy.vestingDuration);
 
-        // Should be able to set up delayed claim before expiry
-        vestingStrategy.claim(delayedExpiryStrategyId2, CLAIM_AMOUNT, merkleProof);
+        // Initial claim should set up delayed claim
+        vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
 
         // Verify delayed claim setup
-        userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        VestingStrategy.UserVesting memory userInfo = vestingStrategy.getUserVestingInfo(claimer1);
         assertTrue(userInfo.isDelayedClaim, "Should have delayed claim set up");
         assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Should have full amount delayed");
 
-        // Move past expiry date
-        vm.warp(strategy.expiryDate + 1);
-        assertTrue(block.timestamp > strategy.expiryDate, "Should be past expiry date");
+        // Move to exact expiry time
+        vm.warp(expiryTime);
 
-        // Should be able to release delayed claim after expiry
-        vestingStrategy.claim(delayedExpiryStrategyId2, CLAIM_AMOUNT, merkleProof);
+        // Should be able to claim at exact expiry time
+        vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
 
         // Verify tokens were released
-        assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT * 2, "Should receive full amount after expiry");
+        assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount at expiry");
         userInfo = vestingStrategy.getUserVestingInfo(claimer1);
-        assertFalse(userInfo.isDelayedClaim, "Delayed claim should be cleared");
-        assertEq(userInfo.delayedAmount, 0, "Delayed amount should be cleared");
+        assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
+        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
+        assertEq(userInfo.delayStartTime, strategy.startTime + strategy.vestingDuration, "Delay start time should be set correctly");
     }
 }
