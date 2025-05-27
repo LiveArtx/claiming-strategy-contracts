@@ -21,6 +21,7 @@ struct Strategy {
     bytes32 merkleRoot;              // Merkle root for the strategy
     bool isActive;                   // Whether the strategy is active
     bool claimWithDelay;             // Whether tokens can only be claimed at vesting end
+    uint256 rewardPercentage;        // Bonus percentage in basis points (e.g., 5000 for 50% bonus)
 }
 ```
 
@@ -81,25 +82,40 @@ IERC20 public immutable vestingToken;                  // The token being vested
 Each vesting strategy includes:
 - **Cliff Duration**: Initial period before linear vesting begins (in seconds)
 - **Cliff Percentage**: Percentage of tokens that can be claimed during the cliff period (in basis points)
-  - Available during the cliff period
-  - Example: 2000 basis points (20%) means 200 tokens can be claimed during cliff
-  - After cliff ends, remaining tokens vest linearly
 - **Vesting Duration**: Total period over which remaining tokens are unlocked (in seconds)
 - **Expiry Date**: Date after which no more claims are allowed (Unix timestamp)
 - **Merkle Root**: Root of the merkle tree for strategy allowlist
 - **Claim With Delay**: Whether tokens can only be claimed at vesting end
+- **Reward Percentage**: Bonus percentage in basis points (max 200%, e.g., 5000 for 50% bonus)
 
-Example token distribution for a 1000 token allocation:
+Example token distribution for a 1000 token allocation with 50% reward:
 ```solidity
-// Strategy with cliff unlock
+// Strategy with cliff unlock and reward
 cliffDuration: 90 days,         // 3-month cliff
-cliffPercentage: 2000,          // 20% (200 tokens) available during cliff
-// Remaining 80% (800 tokens) vests linearly after cliff
+cliffPercentage: 2000,          // 20% (300 tokens) available during cliff (including reward)
+rewardPercentage: 5000,         // 50% bonus
+// Total allocation with reward: 1500 tokens
+// Cliff amount: 300 tokens (20% of 1500)
+// Remaining 1200 tokens vest linearly after cliff
+```
 
-// Strategy with no cliff
-cliffDuration: 0,               // No cliff period
-cliffPercentage: 0,             // No cliff unlock
-// 100% (1000 tokens) vests linearly from start
+### Reward Tiers
+The contract supports different reward tiers based on vesting duration:
+- 8 months: 50% reward (150% total allocation)
+- 10 months: 70% reward (170% total allocation)
+- 12 months: 120% reward (220% total allocation)
+
+Example reward calculations:
+```solidity
+// 1000 token base allocation
+// 8-month strategy (50% reward)
+totalWithReward = 1000 + (1000 * 5000 / 10000) = 1500 tokens
+
+// 10-month strategy (70% reward)
+totalWithReward = 1000 + (1000 * 7000 / 10000) = 1700 tokens
+
+// 12-month strategy (120% reward)
+totalWithReward = 1000 + (1000 * 12000 / 10000) = 2200 tokens
 ```
 
 ### Claiming Mechanism
@@ -162,7 +178,8 @@ await vestingStrategy.createStrategy(
     vestingDuration: 180 days,      // 180 days in seconds
     expiryDate: [future timestamp],
     merkleRoot: [merkle root],
-    claimWithDelay: false          // Whether to enable delayed claims
+    claimWithDelay: false,         // Whether to enable delayed claims
+    rewardPercentage: 5000         // 50% reward in basis points
 );
 ```
 
@@ -191,7 +208,8 @@ All admin functions are restricted to the contract owner:
     vestingDuration,
     expiryDate,
     merkleRoot,
-    claimWithDelay
+    claimWithDelay,
+    rewardPercentage
 )`
 - Update strategy status: `updateStrategyStatus(strategyId, isActive)`
 - Update merkle root: `updateMerkleRoot(strategyId, newMerkleRoot)`
@@ -200,41 +218,47 @@ All admin functions are restricted to the contract owner:
 
 Here are some common strategy configurations:
 
-### 1. Standard Vesting Strategy
+### 1. Standard Vesting Strategy with Reward
 A typical vesting schedule with cliff unlock and linear vesting:
 ```solidity
-// Strategy parameters for 1000 tokens total allocation
+// Strategy parameters for 1000 tokens base allocation
 await vestingStrategy.createStrategy(
+    startTime: block.timestamp,
     cliffDuration: 7 days,          // 7-day cliff
-    cliffPercentage: 1000,          // 10% (100 tokens) available during cliff
+    cliffPercentage: 1000,          // 10% cliff unlock
     vestingDuration: 180 days,      // 6-month vesting
     expiryDate: [future timestamp],
     merkleRoot: [merkle root],
-    claimWithDelay: false          // Normal vesting
+    claimWithDelay: false,         // Normal vesting
+    rewardPercentage: 5000         // 50% reward in basis points
 );
 
-// Vesting schedule:
-// Day 0-7:  100 tokens (10%) available during cliff
-// Day 8-180: 900 tokens vest linearly (~5.2 tokens per day)
+// Vesting schedule (with 50% reward):
+// Total allocation: 1500 tokens (1000 base + 500 reward)
+// Day 0-7:  150 tokens (10% of 1500) available during cliff
+// Day 8-180: 1350 tokens vest linearly (~7.8 tokens per day)
 // Day 180+: All tokens available
 ```
 
-### 2. Delayed Claim Strategy
+### 2. Delayed Claim Strategy with Reward
 A strategy where tokens can only be claimed at the end of the vesting period:
 ```solidity
-// Strategy parameters for 1000 tokens total allocation
+// Strategy parameters for 1000 tokens base allocation
 await vestingStrategy.createStrategy(
+    startTime: block.timestamp,
     cliffDuration: 0,               // No cliff
     cliffPercentage: 0,             // No cliff unlock
     vestingDuration: 365 days,      // 1-year vesting
     expiryDate: [future timestamp],
     merkleRoot: [merkle root],
-    claimWithDelay: true           // Enable delayed claims
+    claimWithDelay: true,          // Enable delayed claims
+    rewardPercentage: 12000        // 120% reward for 12-month vesting
 );
 
-// Vesting schedule:
+// Vesting schedule (with 120% reward):
+// Total allocation: 2200 tokens (1000 base + 1200 reward)
 // Day 0-364: No tokens can be claimed
-// Day 365:   User can claim full 1000 tokens
+// Day 365: User can claim full 2200 tokens
 ```
 
 ### 3. Cliff-Heavy Strategy

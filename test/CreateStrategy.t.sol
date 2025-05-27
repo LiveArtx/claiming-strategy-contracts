@@ -29,7 +29,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
 
         // Verify strategy was created (first strategy has ID 1)
@@ -44,6 +45,7 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         assertEq(strategy.claimWithDelay, CLAIM_WITH_DELAY);
         assertEq(strategy.startTime, block.timestamp);
         assertEq(strategy.expiryDate, block.timestamp + EXPIRY_DATE);
+        assertEq(strategy.rewardPercentage, 0);
     }
 
     function test_should_revert_if_not_owner() public {
@@ -57,7 +59,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
     }
 
@@ -72,7 +75,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
     }
 
@@ -87,7 +91,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp - 1, // Past timestamp
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
     }
 
@@ -102,7 +107,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
 
         // Create second strategy
@@ -113,7 +119,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             bytes32(uint256(2)), // Different merkle root
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
 
         // Verify IDs are incrementing
@@ -134,7 +141,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
             block.timestamp,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
 
         vestingStrategy.createStrategy(
@@ -144,7 +152,79 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+    }
+
+    function test_should_create_strategy_with_reward_tiers() public {
+        vm.startPrank(deployer);
+        
+        // Create strategy with 50% reward (8 month claim)
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0, // No cliff
+            0, // No cliff percentage
+            8 * 30 days, // 8 months vesting
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            true, // Enable delayed claims
+            5000 // 50% reward
+        );
+
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(1);
+        assertEq(strategy.rewardPercentage, 5000);
+        assertTrue(strategy.claimWithDelay);
+        assertEq(strategy.vestingDuration, 8 * 30 days);
+
+        // Create strategy with 70% reward (10 month claim)
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0,
+            0,
+            10 * 30 days, // 10 months vesting
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            true,
+            7000 // 70% reward
+        );
+
+        strategy = vestingStrategy.getStrategy(2);
+        assertEq(strategy.rewardPercentage, 7000);
+        assertTrue(strategy.claimWithDelay);
+        assertEq(strategy.vestingDuration, 10 * 30 days);
+
+        // Create strategy with 120% reward (12 month claim)
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0,
+            0,
+            12 * 30 days, // 12 months vesting
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            true,
+            12000 // 120% reward
+        );
+
+        strategy = vestingStrategy.getStrategy(3);
+        assertEq(strategy.rewardPercentage, 12000);
+        assertTrue(strategy.claimWithDelay);
+        assertEq(strategy.vestingDuration, 12 * 30 days);
+    }
+
+    function test_should_revert_when_reward_percentage_exceeds_max() public {
+        vm.startPrank(deployer);
+        
+        vm.expectRevert(VestingStrategy.InvalidStrategy.selector);
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            20001 // Exceeds max 200% (20000)
         );
     }
 
@@ -158,12 +238,14 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            true // Enable delayed claims
+            true, // Enable delayed claims
+            0 // No reward
         );
 
         VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(1);
         assertTrue(strategy.claimWithDelay);
         assertTrue(strategy.isActive);
+        assertEq(strategy.rewardPercentage, 0);
     }
 
     function test_should_create_strategy_with_zero_cliff() public {
@@ -176,13 +258,15 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
 
         VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(1);
         assertEq(strategy.cliffDuration, 0, "Cliff duration should be 0");
         assertEq(strategy.cliffPercentage, 0, "Cliff percentage should be 0");
         assertEq(strategy.vestingDuration, VESTING_DURATION, "Vesting duration should remain unchanged");
+        assertEq(strategy.rewardPercentage, 0, "Reward percentage should be 0");
     }
 
     function test_should_allow_owner_to_update_user_vesting_info() public {
@@ -196,7 +280,8 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
 
         // Create new vesting info

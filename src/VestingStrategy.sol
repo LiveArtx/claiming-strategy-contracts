@@ -44,6 +44,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         bytes32 merkleRoot; // Merkle root for the strategy
         bool isActive; // Whether the strategy is active
         bool claimWithDelay; // Whether tokens can only be claimed at vesting end
+        uint256 rewardPercentage; // Bonus percentage in basis points (e.g., 5000 for 50% bonus)
     }
 
     struct UserVesting {
@@ -69,7 +70,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     uint256 private _nextStrategyId;
 
     // Token Approver
-    address private _tokenApprover;
+    address public _tokenApprover;
 
     // Events
     event StrategyCreated(
@@ -80,7 +81,8 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 expiryDate,
         bytes32 merkleRoot,
         uint256 startTime,
-        bool claimWithDelay
+        bool claimWithDelay,
+        uint256 rewardPercentage
     );
     event StrategyUpdated(uint256 indexed strategyId, bool isActive);
     event TokensClaimed(
@@ -108,11 +110,11 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     error InvalidAmount();
     error InvalidUnlockPercentages();
     error UserAlreadyInStrategy();
-    error DelayedClaimAlreadyActive();
-    error DelayedClaimNotActive();
-    error DelayedClaimLockNotExpired();
 
-    function initialize(address vestingToken_, address tokenApprover_) external initializer {
+    function initialize(
+        address vestingToken_,
+        address tokenApprover_
+    ) external initializer {
         _vestingToken = IERC20(vestingToken_);
         _tokenApprover = tokenApprover_;
         __Ownable_init(_msgSender());
@@ -129,6 +131,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
      * @param expiryDate The timestamp when the vesting period ends
      * @param merkleRoot The merkle root for the strategy
      * @param claimWithDelay Whether to enable delayed claims
+     * @param rewardPercentage The bonus percentage in basis points (e.g., 5000 for 50% bonus)
      */
     function createStrategy(
         uint256 startTime,
@@ -137,12 +140,14 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 vestingDuration,
         uint256 expiryDate,
         bytes32 merkleRoot,
-        bool claimWithDelay
+        bool claimWithDelay,
+        uint256 rewardPercentage
     ) external onlyOwner {
         if (cliffPercentage > BASIS_POINTS) revert InvalidUnlockPercentages();
         if (expiryDate <= block.timestamp) revert InvalidStrategy();
         if (startTime >= expiryDate) revert InvalidStrategy();
         if (startTime + vestingDuration > expiryDate) revert InvalidStrategy();
+        if (rewardPercentage > BASIS_POINTS * 2) revert InvalidStrategy(); // Max 200% bonus
 
         uint256 strategyId = _nextStrategyId;
         _nextStrategyId++;
@@ -156,7 +161,8 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             isActive: true,
             merkleRoot: merkleRoot,
             startTime: startTime,
-            claimWithDelay: claimWithDelay
+            claimWithDelay: claimWithDelay,
+            rewardPercentage: rewardPercentage
         });
 
         emit StrategyCreated(
@@ -167,7 +173,8 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             expiryDate,
             merkleRoot,
             startTime,
-            claimWithDelay
+            claimWithDelay,
+            rewardPercentage
         );
     }
 
@@ -191,7 +198,13 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
         // Handle delayed claim release if user has a delayed claim
         if (userInfo.isDelayedClaim) {
-            _handleDelayedClaim(user, strategyId, userInfo, strategy, currentTime);
+            _handleDelayedClaim(
+                user,
+                strategyId,
+                userInfo,
+                strategy,
+                currentTime
+            );
             return;
         }
 
@@ -202,7 +215,13 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         }
 
         // Handle normal claim (either initial or subsequent)
-        _handleNormalClaim(user, strategyId, totalAllocation, userInfo, strategy, currentTime);
+        _handleNormalClaim(
+            user,
+            strategyId,
+            totalAllocation,
+            userInfo,
+            currentTime
+        );
     }
 
     /**
@@ -217,7 +236,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         bytes32[] calldata merkleProof
     ) internal view {
         if (totalAllocation == 0) revert InvalidAmount();
-        
+
         Strategy memory strategy = _strategies[strategyId];
         if (strategy.id == 0) revert StrategyNotFound();
         if (!strategy.isActive) revert StrategyInactive();
@@ -253,20 +272,37 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 currentTime
     ) internal {
         uint256 delayedAmount = userInfo.delayedAmount;
-        
+
         // If we're past expiry, allow immediate release
         if (currentTime >= strategy.expiryDate) {
-            _vestingToken.transferFrom(address(_tokenApprover), user, delayedAmount);
-            emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
+            _vestingToken.transferFrom(
+                address(_tokenApprover),
+                user,
+                delayedAmount
+            );
+            emit TokensClaimed(
+                user,
+                strategyId,
+                delayedAmount,
+                false,
+                currentTime
+            );
             return;
         }
 
         // Otherwise, check if delay period has ended
-        if (currentTime < userInfo.delayStartTime + strategy.vestingDuration && userInfo.claimedAmount == 0) {
+        if (
+            currentTime < userInfo.delayStartTime + strategy.vestingDuration &&
+            userInfo.claimedAmount == 0
+        ) {
             revert ClaimNotAllowed();
         }
-        
-        _vestingToken.transferFrom(address(_tokenApprover), user, delayedAmount);
+
+        _vestingToken.transferFrom(
+            address(_tokenApprover),
+            user,
+            delayedAmount
+        );
         emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
     }
 
@@ -281,7 +317,16 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 totalAllocation,
         UserVesting storage userInfo
     ) internal {
-        userInfo.delayedAmount = totalAllocation;
+        Strategy memory strategy = _strategies[strategyId];
+        // Calculate total amount including reward
+        uint256 rewardAmount = FixedPointMathLib.mulDivDown(
+            totalAllocation,
+            strategy.rewardPercentage,
+            BASIS_POINTS
+        );
+        uint256 totalWithReward = totalAllocation + rewardAmount;
+
+        userInfo.delayedAmount = totalWithReward;
         userInfo.delayStartTime = block.timestamp;
         userInfo.isDelayedClaim = true;
         userInfo.claimedAmount = 0;
@@ -296,7 +341,6 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
      * @param strategyId ID of the strategy
      * @param totalAllocation Total allocation for the user
      * @param userInfo User's vesting information
-     * @param strategy Strategy information
      * @param currentTime Current timestamp
      */
     function _handleNormalClaim(
@@ -304,11 +348,13 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 strategyId,
         uint256 totalAllocation,
         UserVesting storage userInfo,
-        Strategy memory strategy,
         uint256 currentTime
     ) internal {
         // Check if enough time has passed since last claim (minimum 1 day)
-        if (userInfo.lastClaimTime > 0 && currentTime < userInfo.lastClaimTime + 1 days) {
+        if (
+            userInfo.lastClaimTime > 0 &&
+            currentTime < userInfo.lastClaimTime + 1 days
+        ) {
             revert NoTokensToClaim();
         }
 
@@ -365,6 +411,14 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         UserVesting storage userInfo = _userVestingInfo[user];
         uint256 currentTime = block.timestamp;
 
+        // Calculate total allocation including bonus
+        uint256 rewardAmount = FixedPointMathLib.mulDivDown(
+            totalAllocation,
+            strategy.rewardPercentage,
+            BASIS_POINTS
+        );
+        uint256 totalWithReward = totalAllocation + rewardAmount;
+
         // Return 0 if we're before the start time
         if (currentTime < strategy.startTime) {
             return (0, false);
@@ -375,9 +429,9 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             if (currentTime < strategy.startTime + strategy.vestingDuration) {
                 return (0, false);
             }
-            // At vesting end, return full allocation if not claimed
+            // At vesting end, return full allocation with reward if not claimed
             if (userInfo.claimedAmount == 0) {
-                return (totalAllocation, true);
+                return (totalWithReward, true);
             }
             return (0, false);
         }
@@ -386,8 +440,8 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
         // If we're past the vesting period, return the full remaining amount
         if (elapsed >= strategy.vestingDuration) {
-            if (userInfo.claimedAmount < totalAllocation) {
-                return (totalAllocation - userInfo.claimedAmount, false);
+            if (userInfo.claimedAmount < totalWithReward) {
+                return (totalWithReward - userInfo.claimedAmount, false);
             }
             return (0, false);
         }
@@ -395,26 +449,37 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         // Calculate total vested amount
         uint256 vested = 0;
 
-        // Cliff percentage calculation
+        // Cliff percentage calculation - apply to total with reward
+        uint256 cliffAmount = 0;
         if (!userInfo.cliffClaimed && elapsed <= strategy.cliffDuration) {
-            vested += FixedPointMathLib.mulDivDown(
-                totalAllocation,
+            cliffAmount = FixedPointMathLib.mulDivDown(
+                totalWithReward,
                 strategy.cliffPercentage,
                 BASIS_POINTS
             );
+            vested += cliffAmount;
             isInitial = true;
+        } else if (userInfo.cliffClaimed) {
+            // If cliff was already claimed, include it in the vested amount
+            cliffAmount = FixedPointMathLib.mulDivDown(
+                totalWithReward,
+                strategy.cliffPercentage,
+                BASIS_POINTS
+            );
+            vested += cliffAmount;
         }
 
-        // Linear vesting calculation after cliff
+        // Linear vesting calculation after cliff - apply to total with reward
         if (elapsed > strategy.cliffDuration) {
             // Calculate how much time has passed since cliff ended
             uint256 timeSinceCliff = elapsed - strategy.cliffDuration;
             // Calculate how much time is left in the vesting period after cliff
-            uint256 vestingPeriodAfterCliff = strategy.vestingDuration - strategy.cliffDuration;
+            uint256 vestingPeriodAfterCliff = strategy.vestingDuration -
+                strategy.cliffDuration;
 
-            // Calculate remaining amount after cliff (80% of total)
+            // Calculate remaining amount after cliff (90% of total with reward)
             uint256 remaining = FixedPointMathLib.mulDivDown(
-                totalAllocation,
+                totalWithReward,
                 BASIS_POINTS - strategy.cliffPercentage,
                 BASIS_POINTS
             );
@@ -428,18 +493,6 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
             // Add to total vested amount
             vested += linearVested;
-
-            // If we're past the vesting period, ensure we can claim the full remaining amount
-            if (elapsed >= strategy.vestingDuration) {
-                uint256 totalVested = FixedPointMathLib.mulDivDown(
-                    totalAllocation,
-                    BASIS_POINTS,
-                    BASIS_POINTS
-                );
-                if (totalVested > vested) {
-                    vested = totalVested;
-                }
-            }
         }
 
         // Calculate claimable amount based on what's vested minus what's already claimed
@@ -450,17 +503,9 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         // If we're past expiry date, allow claiming remaining allocation
         if (
             currentTime > strategy.expiryDate &&
-            totalAllocation > userInfo.claimedAmount
+            totalWithReward > userInfo.claimedAmount
         ) {
-            claimable = totalAllocation - userInfo.claimedAmount;
-        }
-
-        // If we're at or past the vesting period end, ensure we can claim the full remaining amount
-        if (
-            elapsed >= strategy.vestingDuration &&
-            totalAllocation > userInfo.claimedAmount
-        ) {
-            claimable = totalAllocation - userInfo.claimedAmount;
+            claimable = totalWithReward - userInfo.claimedAmount;
         }
 
         return (claimable, isInitial);

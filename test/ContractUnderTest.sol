@@ -21,6 +21,7 @@ abstract contract ContractUnderTest is Test {
     address payable user3 = payable(makeAddr("user3"));
     address payable claimer1 = payable(0xD4B1f81F2484E01FD81c93550a25Bc2023934E8C);
     address payable claimer2 = payable(makeAddr("claimer2"));
+    address payable claimer3 = payable(makeAddr("claimer3"));
     address payable unauthorizedUser = payable(makeAddr("unauthorizedUser"));
     address payable failedReceiver;
     address payable tokenApprover = payable(makeAddr("tokenApprover"));

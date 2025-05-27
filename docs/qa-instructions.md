@@ -55,12 +55,14 @@
 #### 1.1 Valid Strategy
 ```solidity
 createStrategy(
+    startTime: block.timestamp,
     cliffDuration: 60,          // 1 min (seconds)
     cliffPercentage: 2000,      // 20%
     vestingDuration: 300,       // 5 min (seconds)
     expiryDate: block.timestamp + 600,
     merkleRoot: [valid root],
-    claimWithDelay: false
+    claimWithDelay: false,
+    rewardPercentage: 5000      // 50% reward
 )
 ```
 Verify: Transaction success, StrategyCreated event, strategy ID = 1
@@ -68,10 +70,11 @@ Verify: Transaction success, StrategyCreated event, strategy ID = 1
 #### 1.2 Invalid Strategy
 - Past expiry date: Reverts with `InvalidStrategy`
 - Cliff > 100%: Reverts with `InvalidUnlockPercentages`
+- Reward > 200%: Reverts with `InvalidStrategy`
 
-### 2. Normal Claims
+### 2. Normal Claims with Rewards
 
-#### 2.1 Cliff Claim
+#### 2.1 Cliff Claim with Reward
 ```solidity
 claim(
     strategyId: 1,
@@ -79,17 +82,17 @@ claim(
     merkleProof: [valid proof]
 )
 ```
-Verify: 20% tokens received, cliffClaimed = true
+Verify: 20% of (base + reward) tokens received, cliffClaimed = true
 
-#### 2.2 Post-Cliff Claim
+#### 2.2 Post-Cliff Claim with Reward
 - Wait 1 minute after cliff
 - Claim again
-Verify: Linear vesting amount received
+Verify: Linear vesting amount including reward received
 
-#### 2.3 Post-Expiry Claim
+#### 2.3 Post-Expiry Claim with Reward
 - Wait for expiry (5 minutes)
 - Claim remaining allocation
-Verify: Full remaining amount received
+Verify: Full remaining amount including reward received
 
 ### 3. Delayed Claims
 
@@ -140,6 +143,53 @@ Verify: Reverts with `UserAlreadyInStrategy`
 #### 4.3 Pre-Cliff Claim
 - Try claiming before cliff
 Verify: Reverts with `ClaimNotAllowed`
+
+### 3. Reward Tiers Testing
+
+#### 3.1 50% Reward Tier (8 months)
+```solidity
+createStrategy(
+    startTime: block.timestamp,
+    cliffDuration: 0,
+    cliffPercentage: 0,
+    vestingDuration: 8 * 30 days,
+    expiryDate: block.timestamp + 9 * 30 days,
+    merkleRoot: [valid root],
+    claimWithDelay: false,
+    rewardPercentage: 5000      // 50% reward
+)
+```
+Verify: User receives 150% of allocation (base + 50% reward)
+
+#### 3.2 70% Reward Tier (10 months)
+```solidity
+createStrategy(
+    startTime: block.timestamp,
+    cliffDuration: 0,
+    cliffPercentage: 0,
+    vestingDuration: 10 * 30 days,
+    expiryDate: block.timestamp + 11 * 30 days,
+    merkleRoot: [valid root],
+    claimWithDelay: false,
+    rewardPercentage: 7000      // 70% reward
+)
+```
+Verify: User receives 170% of allocation (base + 70% reward)
+
+#### 3.3 120% Reward Tier (12 months)
+```solidity
+createStrategy(
+    startTime: block.timestamp,
+    cliffDuration: 0,
+    cliffPercentage: 0,
+    vestingDuration: 12 * 30 days,
+    expiryDate: block.timestamp + 13 * 30 days,
+    merkleRoot: [valid root],
+    claimWithDelay: false,
+    rewardPercentage: 12000     // 120% reward
+)
+```
+Verify: User receives 220% of allocation (base + 120% reward)
 
 ## Test Data
 

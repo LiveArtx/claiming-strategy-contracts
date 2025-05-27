@@ -11,6 +11,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Merkle} from "murky/src/Merkle.sol";
 import "forge-std/console.sol";
 
+using FixedPointMathLib for uint256;
+
 // Test reentrancy protection by creating a malicious contract
 contract MaliciousClaimer {
     VestingStrategy public vestingStrategy;
@@ -43,6 +45,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     uint256 constant CLIFF_PERCENTAGE = 2000; // 20%
     uint256 constant VESTING_DURATION = 180 days;
     uint256 constant EXPIRY_DATE = 365 days;
+    uint256 constant BASIS_POINTS = 10000; // 100%
     bytes32 constant MERKLE_ROOT = bytes32(uint256(1));
     bool constant CLAIM_WITH_DELAY = false;
     uint256 private strategyId; // Add this to track the strategy ID
@@ -54,9 +57,12 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     AllowlistEntry[] private allowlist;
-    bytes32 private root;
+    bytes32 private merkleRoot;
     mapping(address => bytes32[]) private merkleProofs;
     Merkle private merkle;
+
+    // Add strategy variable at class level
+    VestingStrategy.Strategy private strategy;
 
     function setUp() public override {
         super.setUp();
@@ -64,6 +70,19 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Initialize Murky
         merkle = new Merkle();
         
+        // Create standard strategy (no reward)
+        vm.startPrank(deployer);
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        strategyId = 1;
 
         // Initialize allowlist with amounts in wei
         allowlist = new AllowlistEntry[](32);
@@ -104,7 +123,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         for (uint256 i = 0; i < allowlist.length; i++) {
             leaves[i] = keccak256(abi.encodePacked(allowlist[i].account, allowlist[i].amount));
         }
-        root = merkle.getRoot(leaves);
+        merkleRoot = merkle.getRoot(leaves);
 
         // Generate proofs for each address using Murky
         for (uint256 i = 0; i < allowlist.length; i++) {
@@ -119,23 +138,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             merkleProofs[allowlist[i].account] = proof;
         }
 
-
-        // Create a strategy
-        vm.startPrank(deployer);
-        vestingStrategy.createStrategy(
-            block.timestamp, // startTime
-            CLIFF_DURATION,
-            CLIFF_PERCENTAGE,
-            VESTING_DURATION,
-            block.timestamp + EXPIRY_DATE,
-            root, // Use our merkle root
-            CLAIM_WITH_DELAY
-        );
-        strategyId = 1;
-
-        // Update the merkle root in the strategy to match our tree
-        vestingStrategy.updateMerkleRoot(strategyId, root);
-
         // Mint tokens to token approver and approve vesting contract
         mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT * 100); // Mint enough for all claims
         vm.startPrank(tokenApprover);
@@ -146,7 +148,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
 
     function _getClaimerDetails(address claimer) internal view returns (bytes32, bytes32[] memory) {
         bytes32 leaf = keccak256(abi.encodePacked(claimer, _getAllocation(claimer)));
-        return (root, merkleProofs[claimer]);
+        return (merkleRoot, merkleProofs[claimer]);
     }
 
     // Override parent's _claimerDetails to use our own merkle tree
@@ -743,7 +745,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             bytes32(uint256(2)), // Different merkle root
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
         uint256 strategyId2 = 2;
 
@@ -774,7 +777,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            true // Enable claimWithDelay
+            true, // Enable claimWithDelay
+            0 // No reward
         );
         uint256 delayedStrategyId = 2;
 
@@ -786,7 +790,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             bytes32(uint256(2)), // Different merkle root
-            true // Enable claimWithDelay
+            true, // Enable claimWithDelay
+            0 // No reward
         );
         uint256 secondStrategyId = 3;
 
@@ -853,7 +858,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION, // 180 days vesting
             shortExpiry,
             MERKLE_ROOT,
-            true // Enable delayed claims
+            true, // Enable delayed claims
+            0 // No reward
         );
         uint256 delayedExpiryStrategyId = 2;
 
@@ -865,7 +871,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION,
             shortExpiry,
             bytes32(uint256(2)), // Different merkle root
-            true // Enable delayed claims
+            true, // Enable delayed claims
+            0 // No reward
         );
         uint256 secondStrategyId = 3;
 
@@ -945,7 +952,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION,
             pastExpiryDate,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
         vm.stopPrank();
     }
@@ -964,7 +972,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             longVestingDuration,
             shortExpiryDate,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
         vm.stopPrank();
     }
@@ -979,7 +988,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION,
             block.timestamp + EXPIRY_DATE,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
 
         uint256 futureStartTime = block.timestamp + 30 days;
@@ -992,7 +1002,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION,
             futureExpiryDate,
             MERKLE_ROOT,
-            CLAIM_WITH_DELAY
+            CLAIM_WITH_DELAY,
+            0 // No reward
         );
         uint256 futureStrategyId = 3; // This will be the third strategy (ID 3)
 
@@ -1070,7 +1081,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             VESTING_DURATION,
             expiryTime,
             MERKLE_ROOT,
-            true // Enable claimWithDelay
+            true, // Enable claimWithDelay
+            0 // No reward
         );
         uint256 delayedStrategyId = 2;
 
@@ -1111,5 +1123,348 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
         assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
         assertEq(userInfo.delayStartTime, strategy.startTime + strategy.vestingDuration, "Delay start time should be set correctly");
+    }
+
+    function test_should_apply_reward_to_vesting_calculations() public {
+        vm.startPrank(deployer);
+        
+        // Create strategy with 50% reward and standard vesting (10% cliff, 90% linear)
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            CLIFF_DURATION,
+            1000, // 10% cliff
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            false, // No delayed claims
+            5000 // 50% reward
+        );
+        uint256 rewardStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vm.startPrank(tokenApprover);
+        // Mint enough tokens including reward
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000 / 10000));
+        vm.stopPrank();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(rewardStrategyId, root);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+
+        // Calculate total amount with reward
+        uint256 totalWithReward = CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000 / 10000); // 150% of allocation
+        
+        // Calculate cliff amount (10% of total with reward)
+        uint256 cliffAmount = (totalWithReward * 1000) / 10000;
+        
+        // Claim at cliff
+        vestingStrategy.claim(rewardStrategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), cliffAmount, "Should receive cliff amount including reward");
+
+        // Move past cliff period
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(rewardStrategyId);
+        vm.warp(strategy.startTime + strategy.cliffDuration + 1);
+
+        // Calculate remaining amount after cliff (90% of total with reward) using the same method as the contract
+        uint256 remainingAmount = FixedPointMathLib.mulDivDown(
+            totalWithReward,
+            BASIS_POINTS - strategy.cliffPercentage,
+            BASIS_POINTS
+        );
+        
+        // Move to middle of vesting period
+        uint256 halfVestingPeriod = (strategy.vestingDuration - strategy.cliffDuration) / 2;
+        vm.warp(strategy.startTime + strategy.cliffDuration + halfVestingPeriod);
+        
+        // Claim again
+        vestingStrategy.claim(rewardStrategyId, CLAIM_AMOUNT, merkleProof);
+        
+        // Calculate expected vested amount at this point:
+        // 1. Cliff amount (10% of total with reward)
+        // 2. Half of remaining amount (45% of total with reward)
+        uint256 expectedVested = cliffAmount + (remainingAmount / 2);
+        
+        // Get actual balance
+        uint256 actualBalance = mockERC20Token.balanceOf(claimer1);
+        
+        // Allow for small rounding errors (1% of remaining amount)
+        uint256 maxDelta = remainingAmount / 100;
+        assertApproxEqAbs(
+            actualBalance,
+            expectedVested,
+            maxDelta,
+            "Should receive correct vested amount including reward"
+        );
+
+        // Move to end of vesting period
+        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        
+        // Final claim
+        vestingStrategy.claim(rewardStrategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), totalWithReward, "Should receive full amount including reward at vesting end");
+    }
+
+    function test_should_claim_with_50_percent_reward() public {
+        vm.startPrank(deployer);
+        
+        // Create 8 month claim with 50% reward
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0, // No cliff
+            0, // No cliff percentage
+            8 * 30 days, // 8 months vesting
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            false, // Disable delayed claims for immediate vesting
+            5000 // 50% reward
+        );
+        uint256 strategyId = 2;
+
+        // Setup merkle root and mint tokens
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vm.startPrank(tokenApprover);
+        // Mint enough tokens including reward
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000 / 10000));
+        vm.stopPrank();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        
+        // Calculate expected amount: base + 50% reward
+        uint256 expectedAmount = CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000 / 10000); // 150% of allocation
+        
+        // Move past vesting period
+        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        
+        // Check claimable amount before claiming
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, strategyId, CLAIM_AMOUNT);
+        assertEq(claimableAmount, expectedAmount, "Claimable amount should match expected amount");
+        
+        // Claim should work immediately since delayed claims are disabled
+        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), expectedAmount, "Should receive 150% of allocation for 8 month claim");
+        vm.stopPrank();
+    }
+
+    function test_should_claim_with_70_percent_reward() public {
+        // Reset user's vesting info
+        vm.startPrank(deployer);
+        vestingStrategy.setUserVestingInfo(claimer1, VestingStrategy.UserVesting({
+            strategyId: 0,
+            claimedAmount: 0,
+            lastClaimTime: 0,
+            cliffClaimed: false,
+            delayedAmount: 0,
+            delayStartTime: 0,
+            isDelayedClaim: false
+        }));
+        
+        // Create 10 month claim with 70% reward
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0,
+            0,
+            10 * 30 days, // 10 months vesting
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            false, // Disable delayed claims for immediate vesting
+            7000 // 70% reward
+        );
+        uint256 newStrategyId = 2;
+
+        // Setup merkle root and mint tokens
+        (bytes32 currentRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        vm.startPrank(tokenApprover);
+        // Mint enough tokens including reward
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT + (CLAIM_AMOUNT * 7000 / 10000));
+        vm.stopPrank();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(newStrategyId, currentRoot);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+        strategy = vestingStrategy.getStrategy(newStrategyId);
+        
+        uint256 expectedAmount = CLAIM_AMOUNT + (CLAIM_AMOUNT * 7000 / 10000); // 170% of allocation
+        
+        // Move past vesting period
+        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        
+        // Check claimable amount before claiming
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, newStrategyId, CLAIM_AMOUNT);
+        assertEq(claimableAmount, expectedAmount, "Claimable amount should match expected amount");
+        
+        vestingStrategy.claim(newStrategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), expectedAmount, "Should receive 170% of allocation for 10 month claim");
+        vm.stopPrank();
+    }
+
+    function test_should_claim_with_120_percent_reward() public {
+        // Reset user's vesting info
+        vm.startPrank(deployer);
+        vestingStrategy.setUserVestingInfo(claimer1, VestingStrategy.UserVesting({
+            strategyId: 0,
+            claimedAmount: 0,
+            lastClaimTime: 0,
+            cliffClaimed: false,
+            delayedAmount: 0,
+            delayStartTime: 0,
+            isDelayedClaim: false
+        }));
+        
+        // Create 12 month claim with 120% reward
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0,
+            0,
+            12 * 30 days, // 12 months vesting
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            false, // Disable delayed claims for immediate vesting
+            12000 // 120% reward
+        );
+        uint256 newStrategyId = 2;
+
+        // Setup merkle root and mint tokens
+        (bytes32 currentRoot, bytes32[] memory merkleProof) = _claimerDetails();
+        vm.startPrank(tokenApprover);
+        // Mint enough tokens including reward
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT + (CLAIM_AMOUNT * 12000 / 10000));
+        vm.stopPrank();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(newStrategyId, currentRoot);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+        strategy = vestingStrategy.getStrategy(newStrategyId);
+        
+        uint256 expectedAmount = CLAIM_AMOUNT + (CLAIM_AMOUNT * 12000 / 10000); // 220% of allocation
+        
+        // Move past vesting period
+        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        
+        // Check claimable amount before claiming
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, newStrategyId, CLAIM_AMOUNT);
+        assertEq(claimableAmount, expectedAmount, "Claimable amount should match expected amount");
+        
+        vestingStrategy.claim(newStrategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), expectedAmount, "Should receive 220% of allocation for 12 month claim");
+        vm.stopPrank();
+    }
+
+    function test_should_claim_with_cliff() public {
+        // Create strategy with cliff
+        vm.startPrank(deployer);
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            60, // 1 min cliff
+            2000, // 20% cliff
+            300, // 5 min vesting
+            block.timestamp + 600,
+            MERKLE_ROOT,
+            false, // No delayed claims
+            5000 // 50% reward
+        );
+        uint256 strategy_id = 1;
+
+        // Setup merkle root and mint tokens
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vm.stopPrank();
+
+        vm.startPrank(tokenApprover);
+        // Mint enough tokens including reward
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000 / 10000));
+        vm.stopPrank();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(strategy_id, root);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+        VestingStrategy.Strategy memory _strategy = vestingStrategy.getStrategy(strategy_id);
+        
+        // Calculate cliff amount (20% of total with reward)
+        uint256 rewardAmount = FixedPointMathLib.mulDivDown(CLAIM_AMOUNT, _strategy.rewardPercentage, BASIS_POINTS);
+        uint256 totalWithReward = CLAIM_AMOUNT + rewardAmount;
+        uint256 cliffAmount = FixedPointMathLib.mulDivDown(totalWithReward, _strategy.cliffPercentage, BASIS_POINTS);
+        
+        // Check claimable amount before claiming
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, strategy_id, CLAIM_AMOUNT);
+        assertEq(claimableAmount, cliffAmount, "Claimable amount should match cliff amount");
+        
+        vestingStrategy.claim(strategy_id, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), cliffAmount, "Should receive cliff amount");
+        vm.stopPrank();
+
+        // Move past cliff period and wait 24 hours for cooldown
+        vm.warp(_strategy.startTime + _strategy.cliffDuration + 1 days + 1);
+        
+        // Get the actual claimable amount from the contract
+        uint256 actualClaimable = vestingStrategy.getClaimableAmount(claimer1, strategy_id, CLAIM_AMOUNT);
+        
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(strategy_id, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), cliffAmount + actualClaimable, "Should receive cliff + linear vesting amount");
+        vm.stopPrank();
+    }
+
+    function test_should_claim_with_delayed_claim() public {
+        vm.startPrank(deployer);
+        
+        // Create strategy with delayed claims
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0, // No cliff
+            0, // No cliff percentage
+            60, // 1 min vesting
+            block.timestamp + 300,
+            MERKLE_ROOT,
+            true, // Enable delayed claims
+            5000 // 50% reward
+        );
+        uint256 strategyId = 2;
+
+        // Setup merkle root and mint tokens
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vm.startPrank(tokenApprover);
+        // Mint enough tokens including reward
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000 / 10000));
+        vm.stopPrank();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        
+        // Calculate total amount with reward
+        uint256 rewardAmount = FixedPointMathLib.mulDivDown(CLAIM_AMOUNT, strategy.rewardPercentage, BASIS_POINTS);
+        uint256 totalWithReward = CLAIM_AMOUNT + rewardAmount;
+        
+        // Initial claim should set up delayed claim
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, strategyId, CLAIM_AMOUNT);
+        assertEq(claimableAmount, 0, "No tokens should be claimable before vesting end");
+        
+        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        
+        // Move past vesting period
+        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        
+        // Check claimable amount before final claim
+        claimableAmount = vestingStrategy.getClaimableAmount(claimer1, strategyId, CLAIM_AMOUNT);
+        assertEq(claimableAmount, totalWithReward, "Full amount should be claimable after vesting end");
+        
+        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), totalWithReward, "Should receive full amount with reward");
+        vm.stopPrank();
     }
 }

@@ -26,4 +26,8 @@ contract VestingStrategy_Initialize_Test is ContractUnderTest {
         vestingStrategy.initialize(address(mockERC20Token), tokenApprover);
     }
 
+    function test_should_set_token_approver_correctly() public view {
+        assertEq(vestingStrategy._tokenApprover(), tokenApprover);
+    }
+
 }
