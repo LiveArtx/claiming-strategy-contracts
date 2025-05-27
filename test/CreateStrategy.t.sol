@@ -212,22 +212,6 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
         assertEq(strategy.vestingDuration, 12 * 30 days);
     }
 
-    function test_should_revert_when_reward_percentage_exceeds_max() public {
-        vm.startPrank(deployer);
-        
-        vm.expectRevert(VestingStrategy.InvalidStrategy.selector);
-        vestingStrategy.createStrategy(
-            block.timestamp,
-            CLIFF_DURATION,
-            CLIFF_PERCENTAGE,
-            VESTING_DURATION,
-            block.timestamp + EXPIRY_DATE,
-            MERKLE_ROOT,
-            CLAIM_WITH_DELAY,
-            20001 // Exceeds max 200% (20000)
-        );
-    }
-
     function test_should_create_strategy_with_delayed_claims() public {
         vm.startPrank(deployer);
         
@@ -324,5 +308,68 @@ contract VestingStrategy_CreateStrategy_Test is ContractUnderTest {
 
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user1));
         vestingStrategy.setUserVestingInfo(user2, newInfo);
+    }
+
+    function test_should_revert_when_cliff_percentage_and_duration_are_inconsistent() public {
+        vm.startPrank(deployer);
+        
+        // Test case 1: Cliff percentage > 0 but cliff duration = 0
+        vm.expectRevert(VestingStrategy.InvalidStrategy.selector);
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0, // No cliff duration
+            1000, // 10% cliff percentage
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+
+        // Test case 2: Cliff percentage = 0 but cliff duration > 0
+        vm.expectRevert(VestingStrategy.InvalidStrategy.selector);
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            CLIFF_DURATION, // Has cliff duration
+            0, // No cliff percentage
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+
+        // Test case 3: Both cliff percentage and duration = 0 (should succeed)
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            0, // No cliff duration
+            0, // No cliff percentage
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+
+        // Test case 4: Both cliff percentage and duration > 0 (should succeed)
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            CLIFF_DURATION, // Has cliff duration
+            CLIFF_PERCENTAGE, // Has cliff percentage
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+
+        // Verify the last two strategies were created successfully
+        VestingStrategy.Strategy memory strategy1 = vestingStrategy.getStrategy(1);
+        assertEq(strategy1.cliffDuration, 0, "Strategy 1 should have no cliff duration");
+        assertEq(strategy1.cliffPercentage, 0, "Strategy 1 should have no cliff percentage");
+
+        VestingStrategy.Strategy memory strategy2 = vestingStrategy.getStrategy(2);
+        assertEq(strategy2.cliffDuration, CLIFF_DURATION, "Strategy 2 should have cliff duration");
+        assertEq(strategy2.cliffPercentage, CLIFF_PERCENTAGE, "Strategy 2 should have cliff percentage");
     }
 } 

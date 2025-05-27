@@ -147,7 +147,11 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         if (expiryDate <= block.timestamp) revert InvalidStrategy();
         if (startTime >= expiryDate) revert InvalidStrategy();
         if (startTime + vestingDuration > expiryDate) revert InvalidStrategy();
-        if (rewardPercentage > BASIS_POINTS * 2) revert InvalidStrategy(); // Max 200% bonus
+
+        // Check if cliff percentage and duration are consistent
+        if ((cliffPercentage > 0 && cliffDuration == 0) || (cliffPercentage == 0 && cliffDuration > 0)) {
+            revert InvalidStrategy();
+        }
 
         uint256 strategyId = _nextStrategyId;
         _nextStrategyId++;

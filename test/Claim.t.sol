@@ -127,13 +127,13 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
 
         // Generate proofs for each address using Murky
         for (uint256 i = 0; i < allowlist.length; i++) {
-            console.log("");
-            console.log(allowlist[i].account);
+            // console.log("");
+            // console.log(allowlist[i].account);
             bytes32[] memory proof = merkle.getProof(leaves, i);
-            for (uint256 j = 0; j < proof.length; j++) {
-                console.logBytes32(proof[j]);
-            }
-            console.log("");
+            // for (uint256 j = 0; j < proof.length; j++) {
+            //     console.logBytes32(proof[j]);
+            // }
+            // console.log("");
 
             merkleProofs[allowlist[i].account] = proof;
         }
@@ -142,7 +142,6 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT * 100); // Mint enough for all claims
         vm.startPrank(tokenApprover);
         mockERC20Token.approve(address(vestingStrategy), type(uint256).max);
-        vm.stopPrank();
         vm.stopPrank();
     }
 
