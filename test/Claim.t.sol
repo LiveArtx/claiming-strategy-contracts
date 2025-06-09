@@ -839,9 +839,22 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Verify tokens were released but delayed claim state remains
         assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount");
         userInfo = vestingStrategy.getUserVestingInfo(claimer1);
-        assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
-        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
-        assertEq(userInfo.delayStartTime, strategy.startTime + strategy.vestingDuration + 1, "Delay start time should remain set");
+        assertFalse(userInfo.isDelayedClaim, "Delayed claim state should be reset after claiming");
+        assertEq(userInfo.delayedAmount, 0, "Delayed amount should be reset after claiming");
+        assertEq(userInfo.delayStartTime, 0, "Delay start time should be reset after claiming");
+        assertEq(userInfo.strategyId, delayedStrategyId, "Strategy ID should remain set");
+        assertEq(userInfo.claimedAmount, CLAIM_AMOUNT, "Claimed amount should be updated");
+
+        // Try to claim again after expiry - should revert since no tokens are claimable
+        vm.expectRevert(VestingStrategy.NoTokensToClaim.selector);
+        vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
+
+        // Verify user info remains unchanged
+        userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertFalse(userInfo.isDelayedClaim, "Delayed claim state should remain reset");
+        assertEq(userInfo.delayedAmount, 0, "Delayed amount should remain reset");
+        assertEq(userInfo.strategyId, delayedStrategyId, "Strategy ID should remain set");
+        assertEq(userInfo.claimedAmount, CLAIM_AMOUNT, "Claimed amount should remain unchanged");
     }
 
     function test_should_handle_delayed_claims_with_expiry_date() public {
@@ -922,20 +935,22 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Verify tokens were released but delayed claim state remains
         assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount after expiry");
         userInfo = vestingStrategy.getUserVestingInfo(claimer1);
-        assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
-        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
-        assertEq(userInfo.delayStartTime, strategy.startTime + strategy.vestingDuration + 1, "Delay start time should remain set");
+        assertFalse(userInfo.isDelayedClaim, "Delayed claim state should be reset after claiming");
+        assertEq(userInfo.delayedAmount, 0, "Delayed amount should be reset after claiming");
+        assertEq(userInfo.delayStartTime, 0, "Delay start time should be reset after claiming");
         assertEq(userInfo.strategyId, delayedExpiryStrategyId, "Strategy ID should remain set");
+        assertEq(userInfo.claimedAmount, CLAIM_AMOUNT, "Claimed amount should be updated");
 
-        // Try to claim again after expiry - should succeed since we're past expiry
+        // Try to claim again after expiry - should revert since no tokens are claimable
+        vm.expectRevert(VestingStrategy.NoTokensToClaim.selector);
         vestingStrategy.claim(delayedExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
 
         // Verify user info remains unchanged
         userInfo = vestingStrategy.getUserVestingInfo(claimer1);
-        assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
-        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
+        assertFalse(userInfo.isDelayedClaim, "Delayed claim state should remain reset");
+        assertEq(userInfo.delayedAmount, 0, "Delayed amount should remain reset");
         assertEq(userInfo.strategyId, delayedExpiryStrategyId, "Strategy ID should remain set");
-        assertEq(userInfo.claimedAmount, 0, "Claimed amount should remain 0 since we used delayed claim");
+        assertEq(userInfo.claimedAmount, CLAIM_AMOUNT, "Claimed amount should remain unchanged");
     }
 
     function test_should_revert_when_start_time_is_after_expiry_date() public {
@@ -1119,9 +1134,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         // Verify tokens were released
         assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount at expiry");
         userInfo = vestingStrategy.getUserVestingInfo(claimer1);
-        assertTrue(userInfo.isDelayedClaim, "Delayed claim state should remain set");
-        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Delayed amount should remain set");
-        assertEq(userInfo.delayStartTime, strategy.startTime + strategy.vestingDuration, "Delay start time should be set correctly");
+        assertFalse(userInfo.isDelayedClaim, "Delayed claim state should be reset after claiming");
+        assertEq(userInfo.delayedAmount, 0, "Delayed amount should be reset after claiming");
+        assertEq(userInfo.delayStartTime, 0, "Delay start time should be reset after claiming");
+        assertEq(userInfo.claimedAmount, CLAIM_AMOUNT, "Claimed amount should be updated");
     }
 
     function test_should_apply_reward_to_vesting_calculations() public {
@@ -1465,5 +1481,74 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
         assertEq(mockERC20Token.balanceOf(claimer1), totalWithReward, "Should receive full amount with reward");
         vm.stopPrank();
+    }
+
+    function test_should_prevent_multiple_delayed_claims_after_release() public {
+        // Create a strategy with claimWithDelay
+        vm.startPrank(deployer);
+        vestingStrategy.createStrategy(
+            block.timestamp,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            block.timestamp + EXPIRY_DATE,
+            MERKLE_ROOT,
+            true, // Enable claimWithDelay
+            0 // No reward
+        );
+        uint256 delayedStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vm.startPrank(tokenApprover);
+        mockERC20Token.mint(tokenApprover, CLAIM_AMOUNT);
+        vm.stopPrank();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(delayedStrategyId, root);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+
+        // Get strategy for timing calculations
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(delayedStrategyId);
+
+        // Move past vesting period
+        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+
+        // Initial claim should set up delayed claim
+        vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
+
+        // Verify delayed claim setup
+        VestingStrategy.UserVesting memory userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertTrue(userInfo.isDelayedClaim, "Should have delayed claim set up");
+        assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Should have full amount delayed");
+
+        // Move past delay period
+        vm.warp(userInfo.delayStartTime + strategy.vestingDuration + 1);
+
+        // Release delayed claim
+        vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
+
+        // Verify tokens were released and delayed claim state is reset
+        assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount");
+        userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertFalse(userInfo.isDelayedClaim, "Delayed claim state should be reset after claiming");
+        assertEq(userInfo.delayedAmount, 0, "Delayed amount should be reset after claiming");
+        assertEq(userInfo.claimedAmount, CLAIM_AMOUNT, "Claimed amount should be updated");
+
+        // Try to claim again - should return 0 claimable amount and not set up new delayed claim
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, delayedStrategyId, CLAIM_AMOUNT);
+        assertEq(claimableAmount, 0, "Should return 0 claimable amount after delayed claim is released");
+
+        // Attempt to claim again - should revert with NoTokensToClaim
+        vm.expectRevert(VestingStrategy.NoTokensToClaim.selector);
+        vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
+
+        // Verify user info remains unchanged
+        userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertFalse(userInfo.isDelayedClaim, "Delayed claim state should remain reset");
+        assertEq(userInfo.delayedAmount, 0, "Delayed amount should remain reset");
+        assertEq(userInfo.strategyId, delayedStrategyId, "Strategy ID should remain set");
+        assertEq(userInfo.claimedAmount, CLAIM_AMOUNT, "Claimed amount should remain unchanged");
     }
 }

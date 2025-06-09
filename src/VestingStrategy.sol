@@ -149,7 +149,10 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         if (startTime + vestingDuration > expiryDate) revert InvalidStrategy();
 
         // Check if cliff percentage and duration are consistent
-        if ((cliffPercentage > 0 && cliffDuration == 0) || (cliffPercentage == 0 && cliffDuration > 0)) {
+        if (
+            (cliffPercentage > 0 && cliffDuration == 0) ||
+            (cliffPercentage == 0 && cliffDuration > 0)
+        ) {
             revert InvalidStrategy();
         }
 
@@ -214,6 +217,18 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
         // For strategies with claimWithDelay, handle initial delayed claim setup
         if (strategy.claimWithDelay) {
+            // Check if user has already claimed their full allocation
+            uint256 rewardAmount = FixedPointMathLib.mulDivDown(
+                totalAllocation,
+                strategy.rewardPercentage,
+                BASIS_POINTS
+            );
+            uint256 totalWithReward = totalAllocation + rewardAmount;
+
+            if (userInfo.claimedAmount >= totalWithReward) {
+                revert NoTokensToClaim();
+            }
+
             _handleInitialDelayedClaim(strategyId, totalAllocation, userInfo);
             return;
         }
@@ -284,6 +299,14 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
                 user,
                 delayedAmount
             );
+
+            // Update user vesting info to reflect the claim
+            userInfo.claimedAmount += delayedAmount;
+            userInfo.lastClaimTime = currentTime;
+            userInfo.delayedAmount = 0;
+            userInfo.isDelayedClaim = false;
+            userInfo.delayStartTime = 0;
+
             emit TokensClaimed(
                 user,
                 strategyId,
@@ -307,6 +330,14 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             user,
             delayedAmount
         );
+
+        // Update user vesting info to reflect the claim
+        userInfo.claimedAmount += delayedAmount;
+        userInfo.lastClaimTime = currentTime;
+        userInfo.delayedAmount = 0;
+        userInfo.isDelayedClaim = false;
+        userInfo.delayStartTime = 0;
+
         emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
     }
 
@@ -428,14 +459,47 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             return (0, false);
         }
 
+        // Handle delayed claims - if user has an active delayed claim, check if it can be released
+        if (userInfo.isDelayedClaim) {
+            // Check if the delayed amount has already been claimed
+            if (userInfo.claimedAmount >= userInfo.delayedAmount) {
+                return (0, false);
+            }
+
+            // If we're past expiry, the delayed amount can be claimed
+            if (currentTime >= strategy.expiryDate) {
+                return (userInfo.delayedAmount - userInfo.claimedAmount, false);
+            }
+
+            // Otherwise, check if delay period has ended
+            if (
+                currentTime >=
+                userInfo.delayStartTime + strategy.vestingDuration
+            ) {
+                return (userInfo.delayedAmount - userInfo.claimedAmount, false);
+            }
+
+            // Delay period hasn't ended yet
+            return (0, false);
+        }
+
         // For strategies with claimWithDelay, only allow claims at vesting end
         if (strategy.claimWithDelay) {
+            // Return 0 if vesting period hasn't ended yet
             if (currentTime < strategy.startTime + strategy.vestingDuration) {
                 return (0, false);
             }
             // At vesting end, return full allocation with reward if not claimed
-            if (userInfo.claimedAmount == 0) {
+            if (userInfo.claimedAmount == 0 && !userInfo.isDelayedClaim) {
                 return (totalWithReward, true);
+            }
+            // If user has already claimed their full allocation or more, return 0
+            if (userInfo.claimedAmount >= totalWithReward) {
+                return (0, false);
+            }
+            // If user has claimed some amount but not full allocation, return remaining
+            if (userInfo.claimedAmount > 0) {
+                return (totalWithReward - userInfo.claimedAmount, false);
             }
             return (0, false);
         }
