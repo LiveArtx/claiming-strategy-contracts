@@ -424,18 +424,6 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
      * @param totalAllocation Total allocation for the user
      * @return claimable Amount that can be claimed
      * @return isInitial Whether this is the initial claim
-     * @dev Calculation steps:
-     *      1. For strategies with claimWithDelay:
-     *         - Only returns claimable amount at vesting end
-     *         - Returns full allocation if vesting period has ended
-     *         - Returns 0 if vesting period hasn't ended
-     *      2. For normal strategies:
-     *         a. Cliff period: Available immediately if not claimed
-     *            amount = (totalAllocation * cliffPercentage) / 10000
-     *         b. Linear vesting: After cliff, remaining tokens vest linearly
-     *            remaining = totalAllocation - cliffAmount
-     *            dailyRate = remaining / (vestingDuration - cliffDuration)
-     *            vested = dailyRate * daysSinceCliff
      */
     function _calculateClaimable(
         address user,
@@ -447,12 +435,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 currentTime = block.timestamp;
 
         // Calculate total allocation including bonus
-        uint256 rewardAmount = FixedPointMathLib.mulDivDown(
-            totalAllocation,
-            strategy.rewardPercentage,
-            BASIS_POINTS
-        );
-        uint256 totalWithReward = totalAllocation + rewardAmount;
+        uint256 totalWithReward = _calculateTotalWithReward(totalAllocation, strategy.rewardPercentage);
 
         // Return 0 if we're before the start time
         if (currentTime < strategy.startTime) {
@@ -461,49 +444,121 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
         // Handle delayed claims - if user has an active delayed claim, check if it can be released
         if (userInfo.isDelayedClaim) {
-            // Check if the delayed amount has already been claimed
-            if (userInfo.claimedAmount >= userInfo.delayedAmount) {
-                return (0, false);
-            }
-
-            // If we're past expiry, the delayed amount can be claimed
-            if (currentTime >= strategy.expiryDate) {
-                return (userInfo.delayedAmount - userInfo.claimedAmount, false);
-            }
-
-            // Otherwise, check if delay period has ended
-            if (
-                currentTime >=
-                userInfo.delayStartTime + strategy.vestingDuration
-            ) {
-                return (userInfo.delayedAmount - userInfo.claimedAmount, false);
-            }
-
-            // Delay period hasn't ended yet
-            return (0, false);
+            return _calculateDelayedClaimable(userInfo, strategy, currentTime);
         }
 
         // For strategies with claimWithDelay, only allow claims at vesting end
         if (strategy.claimWithDelay) {
-            // Return 0 if vesting period hasn't ended yet
-            if (currentTime < strategy.startTime + strategy.vestingDuration) {
-                return (0, false);
-            }
-            // At vesting end, return full allocation with reward if not claimed
-            if (userInfo.claimedAmount == 0 && !userInfo.isDelayedClaim) {
-                return (totalWithReward, true);
-            }
-            // If user has already claimed their full allocation or more, return 0
-            if (userInfo.claimedAmount >= totalWithReward) {
-                return (0, false);
-            }
-            // If user has claimed some amount but not full allocation, return remaining
-            if (userInfo.claimedAmount > 0) {
-                return (totalWithReward - userInfo.claimedAmount, false);
-            }
+            return _calculateDelayedStrategyClaimable(userInfo, strategy, totalWithReward, currentTime);
+        }
+
+        // Handle normal vesting strategies
+        return _calculateNormalVestingClaimable(userInfo, strategy, totalWithReward, currentTime);
+    }
+
+    /**
+     * @notice Calculates total allocation including reward
+     * @param totalAllocation Base allocation amount
+     * @param rewardPercentage Reward percentage in basis points
+     * @return totalWithReward Total allocation including reward
+     */
+    function _calculateTotalWithReward(
+        uint256 totalAllocation,
+        uint256 rewardPercentage
+    ) internal pure returns (uint256 totalWithReward) {
+        uint256 rewardAmount = FixedPointMathLib.mulDivDown(
+            totalAllocation,
+            rewardPercentage,
+            BASIS_POINTS
+        );
+        return totalAllocation + rewardAmount;
+    }
+
+    /**
+     * @notice Calculates claimable amount for active delayed claims
+     * @param userInfo User's vesting information
+     * @param strategy Strategy information
+     * @param currentTime Current timestamp
+     * @return claimable Amount that can be claimed
+     * @return isInitial Always false for delayed claims
+     */
+    function _calculateDelayedClaimable(
+        UserVesting storage userInfo,
+        Strategy memory strategy,
+        uint256 currentTime
+    ) internal view returns (uint256 claimable, bool isInitial) {
+        // Check if the delayed amount has already been claimed
+        if (userInfo.claimedAmount >= userInfo.delayedAmount) {
             return (0, false);
         }
 
+        // If we're past expiry, the delayed amount can be claimed
+        if (currentTime >= strategy.expiryDate) {
+            return (userInfo.delayedAmount - userInfo.claimedAmount, false);
+        }
+
+        // Otherwise, check if delay period has ended
+        if (currentTime >= userInfo.delayStartTime + strategy.vestingDuration) {
+            return (userInfo.delayedAmount - userInfo.claimedAmount, false);
+        }
+
+        // Delay period hasn't ended yet
+        return (0, false);
+    }
+
+    /**
+     * @notice Calculates claimable amount for delayed strategies (claimWithDelay = true)
+     * @param userInfo User's vesting information
+     * @param strategy Strategy information
+     * @param totalWithReward Total allocation including reward
+     * @param currentTime Current timestamp
+     * @return claimable Amount that can be claimed
+     * @return isInitial Whether this is the initial claim
+     */
+    function _calculateDelayedStrategyClaimable(
+        UserVesting storage userInfo,
+        Strategy memory strategy,
+        uint256 totalWithReward,
+        uint256 currentTime
+    ) internal view returns (uint256 claimable, bool isInitial) {
+        // Return 0 if vesting period hasn't ended yet
+        if (currentTime < strategy.startTime + strategy.vestingDuration) {
+            return (0, false);
+        }
+        
+        // At vesting end, return full allocation with reward if not claimed
+        if (userInfo.claimedAmount == 0 && !userInfo.isDelayedClaim) {
+            return (totalWithReward, true);
+        }
+        
+        // If user has already claimed their full allocation or more, return 0
+        if (userInfo.claimedAmount >= totalWithReward) {
+            return (0, false);
+        }
+        
+        // If user has claimed some amount but not full allocation, return remaining
+        if (userInfo.claimedAmount > 0) {
+            return (totalWithReward - userInfo.claimedAmount, false);
+        }
+        
+        return (0, false);
+    }
+
+    /**
+     * @notice Calculates claimable amount for normal vesting strategies
+     * @param userInfo User's vesting information
+     * @param strategy Strategy information
+     * @param totalWithReward Total allocation including reward
+     * @param currentTime Current timestamp
+     * @return claimable Amount that can be claimed
+     * @return isInitial Whether this is the initial claim
+     */
+    function _calculateNormalVestingClaimable(
+        UserVesting storage userInfo,
+        Strategy memory strategy,
+        uint256 totalWithReward,
+        uint256 currentTime
+    ) internal view returns (uint256 claimable, bool isInitial) {
         uint256 elapsed = currentTime - strategy.startTime;
 
         // If we're past the vesting period, return the full remaining amount
@@ -514,54 +569,9 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             return (0, false);
         }
 
-        // Calculate total vested amount
-        uint256 vested = 0;
-
-        // Cliff percentage calculation - apply to total with reward
-        uint256 cliffAmount = 0;
-        if (!userInfo.cliffClaimed && elapsed <= strategy.cliffDuration) {
-            cliffAmount = FixedPointMathLib.mulDivDown(
-                totalWithReward,
-                strategy.cliffPercentage,
-                BASIS_POINTS
-            );
-            vested += cliffAmount;
-            isInitial = true;
-        } else if (userInfo.cliffClaimed) {
-            // If cliff was already claimed, include it in the vested amount
-            cliffAmount = FixedPointMathLib.mulDivDown(
-                totalWithReward,
-                strategy.cliffPercentage,
-                BASIS_POINTS
-            );
-            vested += cliffAmount;
-        }
-
-        // Linear vesting calculation after cliff - apply to total with reward
-        if (elapsed > strategy.cliffDuration) {
-            // Calculate how much time has passed since cliff ended
-            uint256 timeSinceCliff = elapsed - strategy.cliffDuration;
-            // Calculate how much time is left in the vesting period after cliff
-            uint256 vestingPeriodAfterCliff = strategy.vestingDuration -
-                strategy.cliffDuration;
-
-            // Calculate remaining amount after cliff (90% of total with reward)
-            uint256 remaining = FixedPointMathLib.mulDivDown(
-                totalWithReward,
-                BASIS_POINTS - strategy.cliffPercentage,
-                BASIS_POINTS
-            );
-
-            // Calculate linear vesting amount based on time since cliff
-            uint256 linearVested = FixedPointMathLib.mulDivDown(
-                remaining,
-                timeSinceCliff,
-                vestingPeriodAfterCliff
-            );
-
-            // Add to total vested amount
-            vested += linearVested;
-        }
+        // Calculate total vested amount and check if this is initial cliff claim
+        (uint256 vested, bool isCliffClaim) = _calculateVestedAmount(userInfo, strategy, totalWithReward, elapsed);
+        isInitial = isCliffClaim;
 
         // Calculate claimable amount based on what's vested minus what's already claimed
         if (vested > userInfo.claimedAmount) {
@@ -569,14 +579,111 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         }
 
         // If we're past expiry date, allow claiming remaining allocation
-        if (
-            currentTime > strategy.expiryDate &&
-            totalWithReward > userInfo.claimedAmount
-        ) {
+        if (currentTime > strategy.expiryDate && totalWithReward > userInfo.claimedAmount) {
             claimable = totalWithReward - userInfo.claimedAmount;
         }
 
         return (claimable, isInitial);
+    }
+
+    /**
+     * @notice Calculates the total vested amount based on cliff and linear vesting
+     * @param userInfo User's vesting information
+     * @param strategy Strategy information
+     * @param totalWithReward Total allocation including reward
+     * @param elapsed Time elapsed since strategy start
+     * @return vested Total vested amount
+     * @return isCliffClaim Whether this is a cliff claim
+     */
+    function _calculateVestedAmount(
+        UserVesting storage userInfo,
+        Strategy memory strategy,
+        uint256 totalWithReward,
+        uint256 elapsed
+    ) internal view returns (uint256 vested, bool isCliffClaim) {
+        // Cliff percentage calculation - apply to total with reward
+        (uint256 cliffAmount, bool isCliff) = _calculateCliffAmount(userInfo, strategy, totalWithReward, elapsed);
+        vested += cliffAmount;
+        isCliffClaim = isCliff;
+
+        // Linear vesting calculation after cliff - apply to total with reward
+        if (elapsed > strategy.cliffDuration) {
+            uint256 linearVested = _calculateLinearVestedAmount(strategy, totalWithReward, elapsed);
+            vested += linearVested;
+        }
+
+        return (vested, isCliffClaim);
+    }
+
+    /**
+     * @notice Calculates cliff amount based on current time and user's cliff status
+     * @param userInfo User's vesting information
+     * @param strategy Strategy information
+     * @param totalWithReward Total allocation including reward
+     * @param elapsed Time elapsed since strategy start
+     * @return cliffAmount Amount available during cliff period
+     * @return isCliffClaim Whether this is a cliff claim
+     */
+    function _calculateCliffAmount(
+        UserVesting storage userInfo,
+        Strategy memory strategy,
+        uint256 totalWithReward,
+        uint256 elapsed
+    ) internal view returns (uint256 cliffAmount, bool isCliffClaim) {
+        if (!userInfo.cliffClaimed && elapsed <= strategy.cliffDuration) {
+            cliffAmount = FixedPointMathLib.mulDivDown(
+                totalWithReward,
+                strategy.cliffPercentage,
+                BASIS_POINTS
+            );
+            isCliffClaim = true;
+        } else if (userInfo.cliffClaimed) {
+            // If cliff was already claimed, include it in the vested amount
+            cliffAmount = FixedPointMathLib.mulDivDown(
+                totalWithReward,
+                strategy.cliffPercentage,
+                BASIS_POINTS
+            );
+            isCliffClaim = true;
+        } else {
+            isCliffClaim = false;
+        }
+        return (cliffAmount, isCliffClaim);
+    }
+
+    /**
+     * @notice Calculates linear vesting amount after cliff period
+     * @param strategy Strategy information
+     * @param totalWithReward Total allocation including reward
+     * @param elapsed Time elapsed since strategy start
+     * @return linearVested Amount vested through linear vesting
+     */
+    function _calculateLinearVestedAmount(
+        Strategy memory strategy,
+        uint256 totalWithReward,
+        uint256 elapsed
+    ) internal pure returns (uint256 linearVested) {
+        // Calculate how much time has passed since cliff ended
+        uint256 timeSinceCliff = elapsed - strategy.cliffDuration;
+        
+        // Calculate how much time is left in the vesting period after cliff
+        uint256 vestingPeriodAfterCliff = strategy.vestingDuration - strategy.cliffDuration;
+
+        // Calculate remaining amount after cliff (percentage after cliff of total with reward)
+        uint256 remaining = FixedPointMathLib.mulDivDown(
+            totalWithReward,
+            BASIS_POINTS - strategy.cliffPercentage,
+            BASIS_POINTS
+        );
+
+        // Calculate linear vesting amount based on time since cliff
+        linearVested = FixedPointMathLib.mulDivDown(
+            remaining,
+            timeSinceCliff,
+            vestingPeriodAfterCliff
+        );
+
+        return linearVested;
     }
 
     /**
