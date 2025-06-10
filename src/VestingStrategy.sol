@@ -104,6 +104,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     error InvalidMerkleProof();
     error StrategyNotFound();
     error StrategyInactive();
+    error StrategyExpired();
     error InvalidStrategy();
     error NoTokensToClaim();
     error ClaimNotAllowed();
@@ -263,15 +264,20 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         address user = _msgSender();
         UserVesting storage userInfo = _userVestingInfo[user];
 
+        // Check if user is already participating in a different strategy
+        if (userInfo.strategyId != 0 && userInfo.strategyId != strategyId) {
+            revert UserAlreadyInStrategy();
+        }
+
+        // For new users (not yet participating in this strategy), check if strategy has expired
+        if (userInfo.strategyId == 0 && block.timestamp >= strategy.expiryDate) {
+            revert StrategyExpired();
+        }
+
         // Verify merkle proof
         bytes32 leaf = keccak256(abi.encodePacked(user, totalAllocation));
         if (!MerkleProof.verify(merkleProof, strategy.merkleRoot, leaf)) {
             revert InvalidMerkleProof();
-        }
-
-        // Check if user is already participating in a different strategy
-        if (userInfo.strategyId != 0 && userInfo.strategyId != strategyId) {
-            revert UserAlreadyInStrategy();
         }
     }
 
@@ -697,6 +703,19 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 strategyId,
         uint256 totalAllocation
     ) external view returns (uint256) {
+        // Check if strategy exists and is active
+        Strategy memory strategy = _strategies[strategyId];
+        if (strategy.id == 0) return 0;
+        if (!strategy.isActive) return 0;
+
+        // Get user vesting info
+        UserVesting storage userInfo = _userVestingInfo[user];
+
+        // For new users (not yet participating in this strategy), check if strategy has expired
+        if (userInfo.strategyId == 0 && block.timestamp >= strategy.expiryDate) {
+            return 0;
+        }
+
         (uint256 claimable, ) = _calculateClaimable(
             user,
             strategyId,

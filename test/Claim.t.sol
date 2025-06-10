@@ -127,13 +127,13 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
 
         // Generate proofs for each address using Murky
         for (uint256 i = 0; i < allowlist.length; i++) {
-            // console.log("");
-            // console.log(allowlist[i].account);
+            console.log("");
+            console.log(allowlist[i].account);
             bytes32[] memory proof = merkle.getProof(leaves, i);
-            // for (uint256 j = 0; j < proof.length; j++) {
-            //     console.logBytes32(proof[j]);
-            // }
-            // console.log("");
+            for (uint256 j = 0; j < proof.length; j++) {
+                console.logBytes32(proof[j]);
+            }
+            console.log("");
 
             merkleProofs[allowlist[i].account] = proof;
         }
@@ -1550,5 +1550,470 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         assertEq(userInfo.delayedAmount, 0, "Delayed amount should remain reset");
         assertEq(userInfo.strategyId, delayedStrategyId, "Strategy ID should remain set");
         assertEq(userInfo.claimedAmount, CLAIM_AMOUNT, "Claimed amount should remain unchanged");
+    }
+
+    // ========== EXPIRY DATE FUNCTIONALITY TESTS ==========
+
+    function test_should_prevent_new_users_from_entering_expired_strategy() public {
+        // Create a strategy with short expiry
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // Try to claim as a new user - should revert
+        vm.startPrank(claimer1);
+        vm.expectRevert(VestingStrategy.StrategyExpired.selector);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+    }
+
+    function test_should_allow_existing_users_to_claim_after_expiry() public {
+        // Create a strategy with short expiry
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // First, claimer1 claims before expiry to become an existing user
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        
+        // Verify user is now participating in the strategy
+        VestingStrategy.UserVesting memory userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertEq(userInfo.strategyId, expiredStrategyId, "User should be participating in strategy");
+        
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // Should be able to claim after expiry as an existing user
+        // This should release the delayed claim
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        
+        // Verify tokens were received
+        assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount after expiry");
+        vm.stopPrank();
+    }
+
+    function test_should_allow_existing_users_to_claim_full_allocation_after_expiry() public {
+        // Create a strategy with short expiry and normal vesting (no delay)
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            false, // No claimWithDelay
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // First, claimer1 claims before expiry to become an existing user
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+        
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // claimer1 should be able to claim after expiry
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount after expiry");
+        vm.stopPrank();
+    }
+
+    function test_should_prevent_new_users_from_entering_expired_strategy_with_rewards() public {
+        // Create a strategy with short expiry and rewards
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            5000 // 50% reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // Try to claim as a new user - should revert
+        vm.startPrank(claimer1);
+        vm.expectRevert(VestingStrategy.StrategyExpired.selector);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+    }
+
+    function test_should_allow_existing_users_to_claim_rewards_after_expiry() public {
+        // Create a strategy with short expiry and rewards
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            5000 // 50% reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // First, claimer1 claims before expiry to become an existing user
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        
+        // Verify user is now participating in the strategy
+        VestingStrategy.UserVesting memory userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertEq(userInfo.strategyId, expiredStrategyId, "User should be participating in strategy");
+        
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // Should be able to claim after expiry as an existing user
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        
+        // Verify tokens were received (base + 50% reward)
+        uint256 totalWithReward = CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000) / 10000;
+        assertEq(mockERC20Token.balanceOf(claimer1), totalWithReward, "Should receive full amount with reward after expiry");
+        vm.stopPrank();
+    }
+
+    function test_should_allow_multiple_claims_after_expiry_for_existing_users() public {
+        // Create a strategy with short expiry
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            false, // No claimWithDelay
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // First, claimer1 claims before expiry to become an existing user
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+        
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // claimer1 should be able to claim after expiry
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount after expiry");
+        vm.stopPrank();
+        
+        // claimer2 should not be able to claim after expiry
+        vm.startPrank(claimer2);
+        vm.expectRevert(VestingStrategy.StrategyExpired.selector);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+    }
+
+    function test_should_prevent_new_users_from_entering_expired_strategy_at_exact_expiry_time() public {
+        // Create a strategy with short expiry
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // Move to exact expiry time
+        vm.warp(shortExpiry);
+        
+        // Try to claim as a new user at exact expiry time - should revert
+        vm.startPrank(claimer1);
+        vm.expectRevert(VestingStrategy.StrategyExpired.selector);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+    }
+
+    function test_should_allow_existing_users_to_claim_at_exact_expiry_time() public {
+        // Create a strategy with short expiry
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // First, claimer1 claims before expiry to become an existing user
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        
+        // Move to exact expiry time
+        vm.warp(shortExpiry);
+        
+        // Should be able to claim at exact expiry time as an existing user
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        
+        // Verify tokens were received
+        assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount at exact expiry time");
+        vm.stopPrank();
+    }
+
+    function test_should_prevent_new_users_from_entering_expired_strategy_with_different_user() public {
+        // Create a strategy with short expiry
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // Try to claim as a different user (claimer2) - should revert
+        vm.startPrank(claimer2);
+        vm.expectRevert(VestingStrategy.StrategyExpired.selector);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+    }
+
+    function test_should_allow_existing_user_to_claim_while_preventing_new_users() public {
+        // Create a strategy with short expiry
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // First, claimer1 claims before expiry to become an existing user
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+        
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // claimer1 should be able to claim after expiry
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        assertEq(mockERC20Token.balanceOf(claimer1), CLAIM_AMOUNT, "Should receive full amount after expiry");
+        vm.stopPrank();
+        
+        // claimer2 should not be able to claim after expiry
+        vm.startPrank(claimer2);
+        vm.expectRevert(VestingStrategy.StrategyExpired.selector);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+    }
+
+    function test_should_handle_expiry_with_multiple_strategies() public {
+        // Create two strategies with different expiry dates
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        
+        // Strategy 1: Long expiry
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            VESTING_DURATION,
+            startTime + 365 days, // Long expiry
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 longExpiryStrategyId = 2;
+        
+        // Strategy 2: Short expiry
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            startTime + 30 days, // Short expiry
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 shortExpiryStrategyId = 3;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(longExpiryStrategyId, root);
+        vestingStrategy.updateMerkleRoot(shortExpiryStrategyId, root);
+        vm.stopPrank();
+
+        // Move past short expiry but before long expiry
+        vm.warp(startTime + 60 days);
+        
+        // Should be able to claim from long expiry strategy
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(longExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+        
+        // Should not be able to claim from short expiry strategy as new user
+        vm.startPrank(claimer2);
+        vm.expectRevert(VestingStrategy.StrategyExpired.selector);
+        vestingStrategy.claim(shortExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+    }
+
+    function test_should_handle_expiry_with_getClaimableAmount() public {
+        // Create a strategy with short expiry
+        vm.startPrank(deployer);
+        uint256 startTime = block.timestamp;
+        uint256 shortExpiry = startTime + 30 days; // Short expiry
+        
+        vestingStrategy.createStrategy(
+            startTime,
+            CLIFF_DURATION,
+            CLIFF_PERCENTAGE,
+            20 days, // Shorter vesting duration to fit within expiry
+            shortExpiry,
+            MERKLE_ROOT,
+            CLAIM_WITH_DELAY,
+            0 // No reward
+        );
+        uint256 expiredStrategyId = 2;
+
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        vestingStrategy.updateMerkleRoot(expiredStrategyId, root);
+        vm.stopPrank();
+
+        // First, claimer1 claims BEFORE expiry to become an existing user
+        vm.startPrank(claimer1);
+        vestingStrategy.claim(expiredStrategyId, CLAIM_AMOUNT, merkleProof);
+        vm.stopPrank();
+        
+        // Move past expiry date
+        vm.warp(shortExpiry + 1 days);
+        
+        // getClaimableAmount should return 0 for new users on expired strategy
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer2, expiredStrategyId, CLAIM_AMOUNT);
+        assertEq(claimableAmount, 0, "New users should not be able to claim from expired strategy");
+        
+        // But existing users should still be able to claim the remaining amount
+        claimableAmount = vestingStrategy.getClaimableAmount(claimer1, expiredStrategyId, CLAIM_AMOUNT);
+        uint256 expectedRemaining = CLAIM_AMOUNT - (CLAIM_AMOUNT * CLIFF_PERCENTAGE / 10000); // 80% of total
+        assertEq(claimableAmount, expectedRemaining, "Existing users should be able to claim remaining amount after expiry");
     }
 }
