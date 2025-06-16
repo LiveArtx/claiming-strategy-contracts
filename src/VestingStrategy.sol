@@ -92,13 +92,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         bool isInitialClaim,
         uint256 timestamp
     );
-    event DebugVestingCalculation(
-        uint256 elapsed,
-        uint256 vestingElapsed,
-        uint256 vested,
-        uint256 claimed,
-        uint256 claimable
-    );
+  
 
     // Errors
     error InvalidMerkleProof();
