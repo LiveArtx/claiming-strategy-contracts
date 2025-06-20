@@ -146,7 +146,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function _getClaimerDetails(address claimer) internal view returns (bytes32, bytes32[] memory) {
-        bytes32 leaf = keccak256(abi.encodePacked(claimer, _getAllocation(claimer)));
+        // Remove unused variable warning by not creating the leaf variable
         return (merkleRoot, merkleProofs[claimer]);
     }
 
@@ -291,8 +291,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
 
         vm.startPrank(claimer1);
 
-        // Get strategy for calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        // Get strategy for calculations - rename to avoid shadowing
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(strategyId);
 
         // First claim the cliff amount
         uint256 cliffAmount = (CLAIM_AMOUNT * CLIFF_PERCENTAGE) / 10000; // 20% of total
@@ -309,11 +309,11 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         uint256 SECONDS_PER_DAY = 1 days;
 
         // Move past cliff period
-        vm.warp(strategy.startTime + strategy.cliffDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.cliffDuration + 1);
         lastClaimTime = block.timestamp;
 
         // Calculate total days in vesting period after cliff
-        uint256 vestingDaysAfterCliff = (strategy.vestingDuration - strategy.cliffDuration) / SECONDS_PER_DAY;
+        uint256 vestingDaysAfterCliff = (currentStrategy.vestingDuration - currentStrategy.cliffDuration) / SECONDS_PER_DAY;
 
         // Test claims for each day after cliff
         for (uint256 day = 1; day <= vestingDaysAfterCliff; day++) {
@@ -351,12 +351,12 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             console.log("New claimable", newClaimable);
             console.log("Total claimed", totalClaimed);
             console.log("Time", block.timestamp);
-            console.log("Time since start", block.timestamp - strategy.startTime);
-            console.log("Time since cliff", block.timestamp - (strategy.startTime + strategy.cliffDuration));
+            console.log("Time since start", block.timestamp - currentStrategy.startTime);
+            console.log("Time since cliff", block.timestamp - (currentStrategy.startTime + currentStrategy.cliffDuration));
         }
 
         // Move to end of vesting period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
 
         // Get final claimable amount
         uint256 finalClaimable = vestingStrategy.getClaimableAmount(
@@ -412,18 +412,18 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
 
         // Get strategy for calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(
             strategyId
         );
 
         uint256 totalClaimed = cliffAmount;
         uint256 lastClaimTime = block.timestamp;
         uint256 SECONDS_PER_DAY = 1 days;
-        uint256 totalDays = strategy.vestingDuration / SECONDS_PER_DAY;
+        uint256 totalDays = currentStrategy.vestingDuration / SECONDS_PER_DAY;
         uint256 increment = 10;
 
         // Skip cliff period
-        vm.warp(block.timestamp + strategy.cliffDuration);
+        vm.warp(block.timestamp + currentStrategy.cliffDuration);
         lastClaimTime = block.timestamp;
 
         // Calculate how many 10-day periods we need to cover the full vesting period
@@ -495,12 +495,12 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
 
         // Get strategy for calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(
             strategyId
         );
 
         // Move to after vesting period ends
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1 days);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1 days);
 
         // After vesting period ends, user should be able to claim the full remaining amount
         uint256 remainingAmount = CLAIM_AMOUNT - cliffAmount; // 80% of total
@@ -548,12 +548,12 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(
             strategyId
         );
 
         // Test claim exactly at cliff end
-        vm.warp(strategy.startTime + strategy.cliffDuration);
+        vm.warp(currentStrategy.startTime + currentStrategy.cliffDuration);
         uint256 cliffEndAmount = vestingStrategy.getClaimableAmount(
             claimer1,
             strategyId,
@@ -568,7 +568,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         uint256 totalClaimed = cliffEndAmount;
 
         // Test claim one second before vesting ends
-        vm.warp(strategy.startTime + strategy.vestingDuration - 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration - 1);
         uint256 nearEndAmount = vestingStrategy.getClaimableAmount(
             claimer1,
             strategyId,
@@ -596,10 +596,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.stopPrank();
 
         // Get strategy for calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(strategyId);
 
         // Warp to 10 minutes after strategy start
-        vm.warp(strategy.startTime + 10 minutes);
+        vm.warp(currentStrategy.startTime + 10 minutes);
 
         vm.startPrank(claimer1);
 
@@ -607,7 +607,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
 
         // Warp to 10 minutes after first claim
-        vm.warp(strategy.startTime + 10 minutes);
+        vm.warp(currentStrategy.startTime + 10 minutes);
 
         // Attempt to claim again immediately
         vm.expectRevert(VestingStrategy.NoTokensToClaim.selector);
@@ -624,10 +624,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for timing calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(strategyId);
 
         // Move past cliff period
-        vm.warp(strategy.startTime + strategy.cliffDuration + 1 days);
+        vm.warp(currentStrategy.startTime + currentStrategy.cliffDuration + 1 days);
 
         // Record initial balances
         uint256 initialTokenApproverBalance = mockERC20Token.balanceOf(tokenApprover);
@@ -685,10 +685,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for timing calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(strategyId);
 
         // Move past cliff period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1 days);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1 days);
 
         // Calculate expected claimable amount
         uint256 expectedClaimable = vestingStrategy.getClaimableAmount(
@@ -809,10 +809,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for timing calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(delayedStrategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(delayedStrategyId);
 
         // Move past vesting period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
 
         // Initial claim should set up delayed claim
         vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -831,7 +831,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vestingStrategy.claim(secondStrategyId, CLAIM_AMOUNT, merkleProof);
 
         // Move past delay period
-        vm.warp(userInfo.delayStartTime + strategy.vestingDuration + 1);
+        vm.warp(userInfo.delayStartTime + currentStrategy.vestingDuration + 1);
 
         // Release delayed claim
         vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -903,11 +903,11 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for timing calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(delayedExpiryStrategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(delayedExpiryStrategyId);
 
         // Move past vesting period but before expiry
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
-        assertTrue(block.timestamp < strategy.expiryDate, "Should be before expiry date");
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
+        assertTrue(block.timestamp < currentStrategy.expiryDate, "Should be before expiry date");
 
         // Initial claim should set up delayed claim
         vestingStrategy.claim(delayedExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -926,8 +926,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vestingStrategy.claim(delayedExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
 
         // Move past expiry date
-        vm.warp(strategy.expiryDate + 1);
-        assertTrue(block.timestamp > strategy.expiryDate, "Should be past expiry date");
+        vm.warp(currentStrategy.expiryDate + 1);
+        assertTrue(block.timestamp > currentStrategy.expiryDate, "Should be past expiry date");
 
         // Should be able to release delayed claim after expiry
         vestingStrategy.claim(delayedExpiryStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -1022,13 +1022,13 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         uint256 futureStrategyId = 3; // This will be the third strategy (ID 3)
 
         // Verify strategy was created with correct start time
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(futureStrategyId);
-        assertEq(strategy.startTime, futureStartTime, "Strategy should have correct start time");
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(futureStrategyId);
+        assertEq(currentStrategy.startTime, futureStartTime, "Strategy should have correct start time");
 
         // Verify no tokens can be claimed before start time
         vm.stopPrank();
         vm.startPrank(claimer1);
-        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        // Remove unused variables - we don't need root and merkleProof for this test
         
         // Try to claim before start time
         vm.warp(futureStartTime - 1 days);
@@ -1076,7 +1076,8 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
     }
 
     function test_should_revert_when_claiming_nonexistent_strategy() public {
-        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+        // Only get merkleProof since root is not used
+        (, bytes32[] memory merkleProof) = _claimerDetails();
 
         vm.startPrank(claimer1);
         vm.expectRevert(VestingStrategy.StrategyNotFound.selector);
@@ -1112,10 +1113,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for timing calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(delayedStrategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(delayedStrategyId);
 
         // Move to just before vesting period ends
-        vm.warp(strategy.startTime + strategy.vestingDuration);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration);
 
         // Initial claim should set up delayed claim
         vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -1172,26 +1173,26 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         uint256 totalWithReward = CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000 / 10000); // 150% of allocation
         
         // Calculate cliff amount (10% of total with reward)
-        uint256 cliffAmount = (totalWithReward * 1000) / 10000;
+        uint256 cliffAmount = FixedPointMathLib.mulDivDown(totalWithReward, 1000, BASIS_POINTS);
         
         // Claim at cliff
         vestingStrategy.claim(rewardStrategyId, CLAIM_AMOUNT, merkleProof);
         assertEq(mockERC20Token.balanceOf(claimer1), cliffAmount, "Should receive cliff amount including reward");
 
         // Move past cliff period
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(rewardStrategyId);
-        vm.warp(strategy.startTime + strategy.cliffDuration + 1);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(rewardStrategyId);
+        vm.warp(currentStrategy.startTime + currentStrategy.cliffDuration + 1);
 
         // Calculate remaining amount after cliff (90% of total with reward) using the same method as the contract
         uint256 remainingAmount = FixedPointMathLib.mulDivDown(
             totalWithReward,
-            BASIS_POINTS - strategy.cliffPercentage,
+            BASIS_POINTS - currentStrategy.cliffPercentage,
             BASIS_POINTS
         );
         
         // Move to middle of vesting period
-        uint256 halfVestingPeriod = (strategy.vestingDuration - strategy.cliffDuration) / 2;
-        vm.warp(strategy.startTime + strategy.cliffDuration + halfVestingPeriod);
+        uint256 halfVestingPeriod = (currentStrategy.vestingDuration - currentStrategy.cliffDuration) / 2;
+        vm.warp(currentStrategy.startTime + currentStrategy.cliffDuration + halfVestingPeriod);
         
         // Claim again
         vestingStrategy.claim(rewardStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -1214,7 +1215,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         );
 
         // Move to end of vesting period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
         
         // Final claim
         vestingStrategy.claim(rewardStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -1235,7 +1236,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             false, // Disable delayed claims for immediate vesting
             5000 // 50% reward
         );
-        uint256 strategyId = 2;
+        uint256 localStrategyId = 2;
 
         // Setup merkle root and mint tokens
         (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
@@ -1245,24 +1246,24 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.stopPrank();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, root);
+        vestingStrategy.updateMerkleRoot(localStrategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(localStrategyId);
         
         // Calculate expected amount: base + 50% reward
         uint256 expectedAmount = CLAIM_AMOUNT + (CLAIM_AMOUNT * 5000 / 10000); // 150% of allocation
         
         // Move past vesting period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
         
         // Check claimable amount before claiming
-        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, strategyId, CLAIM_AMOUNT);
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, localStrategyId, CLAIM_AMOUNT);
         assertEq(claimableAmount, expectedAmount, "Claimable amount should match expected amount");
         
         // Claim should work immediately since delayed claims are disabled
-        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        vestingStrategy.claim(localStrategyId, CLAIM_AMOUNT, merkleProof);
         assertEq(mockERC20Token.balanceOf(claimer1), expectedAmount, "Should receive 150% of allocation for 8 month claim");
         vm.stopPrank();
     }
@@ -1291,7 +1292,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             false, // Disable delayed claims for immediate vesting
             7000 // 70% reward
         );
-        uint256 newStrategyId = 2;
+        uint256 localStrategyId = 2;
 
         // Setup merkle root and mint tokens
         (bytes32 currentRoot, bytes32[] memory merkleProof) = _claimerDetails();
@@ -1301,22 +1302,22 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.stopPrank();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(newStrategyId, currentRoot);
+        vestingStrategy.updateMerkleRoot(localStrategyId, currentRoot);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
-        strategy = vestingStrategy.getStrategy(newStrategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(localStrategyId);
         
         uint256 expectedAmount = CLAIM_AMOUNT + (CLAIM_AMOUNT * 7000 / 10000); // 170% of allocation
         
         // Move past vesting period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
         
         // Check claimable amount before claiming
-        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, newStrategyId, CLAIM_AMOUNT);
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, localStrategyId, CLAIM_AMOUNT);
         assertEq(claimableAmount, expectedAmount, "Claimable amount should match expected amount");
         
-        vestingStrategy.claim(newStrategyId, CLAIM_AMOUNT, merkleProof);
+        vestingStrategy.claim(localStrategyId, CLAIM_AMOUNT, merkleProof);
         assertEq(mockERC20Token.balanceOf(claimer1), expectedAmount, "Should receive 170% of allocation for 10 month claim");
         vm.stopPrank();
     }
@@ -1345,7 +1346,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             false, // Disable delayed claims for immediate vesting
             12000 // 120% reward
         );
-        uint256 newStrategyId = 2;
+        uint256 localStrategyId = 2;
 
         // Setup merkle root and mint tokens
         (bytes32 currentRoot, bytes32[] memory merkleProof) = _claimerDetails();
@@ -1355,22 +1356,22 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.stopPrank();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(newStrategyId, currentRoot);
+        vestingStrategy.updateMerkleRoot(localStrategyId, currentRoot);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
-        strategy = vestingStrategy.getStrategy(newStrategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(localStrategyId);
         
         uint256 expectedAmount = CLAIM_AMOUNT + (CLAIM_AMOUNT * 12000 / 10000); // 220% of allocation
         
         // Move past vesting period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
         
         // Check claimable amount before claiming
-        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, newStrategyId, CLAIM_AMOUNT);
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, localStrategyId, CLAIM_AMOUNT);
         assertEq(claimableAmount, expectedAmount, "Claimable amount should match expected amount");
         
-        vestingStrategy.claim(newStrategyId, CLAIM_AMOUNT, merkleProof);
+        vestingStrategy.claim(localStrategyId, CLAIM_AMOUNT, merkleProof);
         assertEq(mockERC20Token.balanceOf(claimer1), expectedAmount, "Should receive 220% of allocation for 12 month claim");
         vm.stopPrank();
     }
@@ -1445,7 +1446,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
             true, // Enable delayed claims
             5000 // 50% reward
         );
-        uint256 strategyId = 2;
+        uint256 localStrategyId = 2;
 
         // Setup merkle root and mint tokens
         (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
@@ -1455,30 +1456,30 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.stopPrank();
 
         vm.startPrank(deployer);
-        vestingStrategy.updateMerkleRoot(strategyId, root);
+        vestingStrategy.updateMerkleRoot(localStrategyId, root);
         vm.stopPrank();
 
         vm.startPrank(claimer1);
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(localStrategyId);
         
         // Calculate total amount with reward
-        uint256 rewardAmount = FixedPointMathLib.mulDivDown(CLAIM_AMOUNT, strategy.rewardPercentage, BASIS_POINTS);
+        uint256 rewardAmount = FixedPointMathLib.mulDivDown(CLAIM_AMOUNT, currentStrategy.rewardPercentage, BASIS_POINTS);
         uint256 totalWithReward = CLAIM_AMOUNT + rewardAmount;
         
         // Initial claim should set up delayed claim
-        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, strategyId, CLAIM_AMOUNT);
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(claimer1, localStrategyId, CLAIM_AMOUNT);
         assertEq(claimableAmount, 0, "No tokens should be claimable before vesting end");
         
-        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        vestingStrategy.claim(localStrategyId, CLAIM_AMOUNT, merkleProof);
         
         // Move past vesting period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
         
         // Check claimable amount before final claim
-        claimableAmount = vestingStrategy.getClaimableAmount(claimer1, strategyId, CLAIM_AMOUNT);
+        claimableAmount = vestingStrategy.getClaimableAmount(claimer1, localStrategyId, CLAIM_AMOUNT);
         assertEq(claimableAmount, totalWithReward, "Full amount should be claimable after vesting end");
         
-        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        vestingStrategy.claim(localStrategyId, CLAIM_AMOUNT, merkleProof);
         assertEq(mockERC20Token.balanceOf(claimer1), totalWithReward, "Should receive full amount with reward");
         vm.stopPrank();
     }
@@ -1510,10 +1511,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for timing calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(delayedStrategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(delayedStrategyId);
 
         // Move past vesting period
-        vm.warp(strategy.startTime + strategy.vestingDuration + 1);
+        vm.warp(currentStrategy.startTime + currentStrategy.vestingDuration + 1);
 
         // Initial claim should set up delayed claim
         vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -1524,7 +1525,7 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         assertEq(userInfo.delayedAmount, CLAIM_AMOUNT, "Should have full amount delayed");
 
         // Move past delay period
-        vm.warp(userInfo.delayStartTime + strategy.vestingDuration + 1);
+        vm.warp(userInfo.delayStartTime + currentStrategy.vestingDuration + 1);
 
         // Release delayed claim
         vestingStrategy.claim(delayedStrategyId, CLAIM_AMOUNT, merkleProof);
@@ -2027,15 +2028,15 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(strategyId);
 
         // Move past cliff period without claiming during cliff
-        vm.warp(strategy.startTime + strategy.cliffDuration + 1 days);
+        vm.warp(currentStrategy.startTime + currentStrategy.cliffDuration + 1 days);
 
         // Calculate expected amounts
         uint256 cliffAmount = (CLAIM_AMOUNT * CLIFF_PERCENTAGE) / 10000; // 20% of total
-        uint256 timeSinceCliff = block.timestamp - (strategy.startTime + strategy.cliffDuration);
-        uint256 vestingPeriodAfterCliff = strategy.vestingDuration - strategy.cliffDuration;
+        uint256 timeSinceCliff = block.timestamp - (currentStrategy.startTime + currentStrategy.cliffDuration);
+        uint256 vestingPeriodAfterCliff = currentStrategy.vestingDuration - currentStrategy.cliffDuration;
         uint256 remainingAfterCliff = CLAIM_AMOUNT - cliffAmount; // 80% of total
         
         // Calculate linear vesting amount for the time that has passed since cliff
@@ -2095,10 +2096,10 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         vm.startPrank(claimer1);
 
         // Get strategy for calculations
-        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+        VestingStrategy.Strategy memory currentStrategy = vestingStrategy.getStrategy(strategyId);
 
         // Move to middle of cliff period
-        vm.warp(strategy.startTime + (strategy.cliffDuration / 2));
+        vm.warp(currentStrategy.startTime + (currentStrategy.cliffDuration / 2));
 
         // Calculate expected cliff amount
         uint256 cliffAmount = (CLAIM_AMOUNT * CLIFF_PERCENTAGE) / 10000; // 20% of total

@@ -602,7 +602,7 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 elapsed
     ) internal view returns (uint256 vested, bool isCliffClaim) {
         // Cliff percentage calculation - apply to total with reward
-        (uint256 cliffAmount, bool isCliff) = _calculateCliffAmount(userInfo, strategy, totalWithReward, elapsed);
+        (uint256 cliffAmount, bool isCliff) = _calculateCliffAmount(userInfo, strategy, totalWithReward);
         vested += cliffAmount;
         isCliffClaim = isCliff;
 
@@ -620,15 +620,13 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
      * @param userInfo User's vesting information
      * @param strategy Strategy information
      * @param totalWithReward Total allocation including reward
-     * @param elapsed Time elapsed since strategy start
      * @return cliffAmount Amount available during cliff period
      * @return isCliffClaim Whether this is a cliff claim
      */
     function _calculateCliffAmount(
         UserVesting storage userInfo,
         Strategy memory strategy,
-        uint256 totalWithReward,
-        uint256 elapsed
+        uint256 totalWithReward
     ) internal view returns (uint256 cliffAmount, bool isCliffClaim) {
         // If user hasn't claimed cliff yet, make it available regardless of time
         if (!userInfo.cliffClaimed) {
