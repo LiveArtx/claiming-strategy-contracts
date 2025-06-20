@@ -2016,4 +2016,126 @@ contract VestingStrategy_Claim_Test is ContractUnderTest {
         uint256 expectedRemaining = CLAIM_AMOUNT - (CLAIM_AMOUNT * CLIFF_PERCENTAGE / 10000); // 80% of total
         assertEq(claimableAmount, expectedRemaining, "Existing users should be able to claim remaining amount after expiry");
     }
+
+    function test_should_claim_cliff_amount_when_first_claiming_after_cliff_period() public {
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+
+        // Get strategy for calculations
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+
+        // Move past cliff period without claiming during cliff
+        vm.warp(strategy.startTime + strategy.cliffDuration + 1 days);
+
+        // Calculate expected amounts
+        uint256 cliffAmount = (CLAIM_AMOUNT * CLIFF_PERCENTAGE) / 10000; // 20% of total
+        uint256 timeSinceCliff = block.timestamp - (strategy.startTime + strategy.cliffDuration);
+        uint256 vestingPeriodAfterCliff = strategy.vestingDuration - strategy.cliffDuration;
+        uint256 remainingAfterCliff = CLAIM_AMOUNT - cliffAmount; // 80% of total
+        
+        // Calculate linear vesting amount for the time that has passed since cliff
+        uint256 linearVested = (remainingAfterCliff * timeSinceCliff) / vestingPeriodAfterCliff;
+        
+        // Total expected claimable should be cliff amount + linear vesting amount
+        uint256 expectedTotalClaimable = cliffAmount + linearVested;
+
+        // Get claimable amount
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(
+            claimer1,
+            strategyId,
+            CLAIM_AMOUNT
+        );
+
+        // Verify claimable amount includes cliff + linear vesting
+        assertEq(
+            claimableAmount,
+            expectedTotalClaimable,
+            "Claimable amount should include cliff + linear vesting when claiming after cliff period"
+        );
+
+        // Claim the tokens
+        uint256 preClaimBalance = mockERC20Token.balanceOf(claimer1);
+        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        uint256 postClaimBalance = mockERC20Token.balanceOf(claimer1);
+
+        // Verify the claim amount
+        assertEq(
+            postClaimBalance - preClaimBalance,
+            expectedTotalClaimable,
+            "User should receive cliff + linear vesting amount when claiming after cliff period"
+        );
+
+        // Verify vesting info
+        VestingStrategy.UserVesting memory userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertEq(
+            userInfo.claimedAmount,
+            expectedTotalClaimable,
+            "Claimed amount should be updated correctly"
+        );
+        assertTrue(userInfo.cliffClaimed, "Cliff should be marked as claimed after first claim");
+        assertEq(
+            userInfo.strategyId,
+            strategyId,
+            "User should be assigned to the strategy"
+        );
+    }
+
+    function test_should_claim_only_cliff_amount_when_claiming_during_cliff_period() public {
+        (bytes32 root, bytes32[] memory merkleProof) = _claimerDetails();
+
+        vm.startPrank(deployer);
+        vestingStrategy.updateMerkleRoot(strategyId, root);
+        vm.stopPrank();
+
+        vm.startPrank(claimer1);
+
+        // Get strategy for calculations
+        VestingStrategy.Strategy memory strategy = vestingStrategy.getStrategy(strategyId);
+
+        // Move to middle of cliff period
+        vm.warp(strategy.startTime + (strategy.cliffDuration / 2));
+
+        // Calculate expected cliff amount
+        uint256 cliffAmount = (CLAIM_AMOUNT * CLIFF_PERCENTAGE) / 10000; // 20% of total
+
+        // Get claimable amount
+        uint256 claimableAmount = vestingStrategy.getClaimableAmount(
+            claimer1,
+            strategyId,
+            CLAIM_AMOUNT
+        );
+
+        // Verify only cliff amount is claimable during cliff period
+        assertEq(
+            claimableAmount,
+            cliffAmount,
+            "Only cliff amount should be claimable during cliff period"
+        );
+
+        // Claim the tokens
+        uint256 preClaimBalance = mockERC20Token.balanceOf(claimer1);
+        vestingStrategy.claim(strategyId, CLAIM_AMOUNT, merkleProof);
+        uint256 postClaimBalance = mockERC20Token.balanceOf(claimer1);
+
+        // Verify the claim amount
+        assertEq(
+            postClaimBalance - preClaimBalance,
+            cliffAmount,
+            "User should receive only cliff amount during cliff period"
+        );
+
+        // Verify vesting info
+        VestingStrategy.UserVesting memory userInfo = vestingStrategy.getUserVestingInfo(claimer1);
+        assertEq(
+            userInfo.claimedAmount,
+            cliffAmount,
+            "Claimed amount should be cliff amount only"
+        );
+        assertTrue(userInfo.cliffClaimed, "Cliff should be marked as claimed");
+    }
 }

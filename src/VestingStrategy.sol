@@ -630,15 +630,8 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         uint256 totalWithReward,
         uint256 elapsed
     ) internal view returns (uint256 cliffAmount, bool isCliffClaim) {
-        if (!userInfo.cliffClaimed && elapsed <= strategy.cliffDuration) {
-            cliffAmount = FixedPointMathLib.mulDivDown(
-                totalWithReward,
-                strategy.cliffPercentage,
-                BASIS_POINTS
-            );
-            isCliffClaim = true;
-        } else if (userInfo.cliffClaimed) {
-            // If cliff was already claimed, include it in the vested amount
+        // If user hasn't claimed cliff yet, make it available regardless of time
+        if (!userInfo.cliffClaimed) {
             cliffAmount = FixedPointMathLib.mulDivDown(
                 totalWithReward,
                 strategy.cliffPercentage,
@@ -646,7 +639,13 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             );
             isCliffClaim = true;
         } else {
-            isCliffClaim = false;
+            // User already claimed cliff, so include it in vested amount
+            cliffAmount = FixedPointMathLib.mulDivDown(
+                totalWithReward,
+                strategy.cliffPercentage,
+                BASIS_POINTS
+            );
+            isCliffClaim = false; // Not a cliff claim since already claimed
         }
         return (cliffAmount, isCliffClaim);
     }

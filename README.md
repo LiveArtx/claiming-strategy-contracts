@@ -134,6 +134,48 @@ The contract supports two claiming modes:
    - No partial claims or early unlocks allowed
    - Single claim at vesting end
 
+#### Cliff Claiming Behavior
+
+The contract implements a **basic cliff then incremental vesting** model with special handling for users who don't claim during the cliff period:
+
+**During Cliff Period:**
+- Users can claim their cliff amount (e.g., 20% of total allocation)
+- This is an extended duration where only the cliff allocation is unlocked
+- If claimed, the cliff amount is marked as claimed and included in future vesting calculations
+- If not claimed, the cliff amount remains available for future claims
+
+**After Cliff Period:**
+- If the user **has already claimed** their cliff amount:
+  - Only the linear vesting portion is available for subsequent claims
+  - The cliff amount is included in the total vested calculation but not claimable again
+
+- If the user **has not claimed** their cliff amount:
+  - The cliff amount remains claimable and is included in the first claim after the cliff period
+  - The user receives: `cliff amount + linear vesting amount` in their first claim after cliff
+
+**Example Scenario:**
+```solidity
+// Strategy: 1000 tokens, 20% cliff (200 tokens), 80% linear vesting (800 tokens)
+// Cliff period: Days 0-7 (extended duration where only cliff is unlocked)
+// Vesting period: Days 8-180 (linear vesting begins)
+
+// Scenario 1: User claims during cliff period
+// Day 5: User claims 200 tokens (cliff amount)
+// Day 15: User can claim linear vesting portion only
+// Day 30: User claims additional linear vesting tokens
+
+// Scenario 2: User doesn't claim during cliff period
+// Day 5: User doesn't claim anything (cliff period is ongoing)
+// Day 15: User claims 200 tokens (cliff) + linear vesting amount
+// Day 30: User claims additional linear vesting tokens
+```
+
+This design ensures that:
+- Users who claim during the cliff period get their cliff amount immediately
+- Users who don't claim during the cliff period don't lose their cliff allocation
+- The cliff amount is always included in the first claim after the cliff period if not previously claimed
+- Linear vesting calculations remain accurate regardless of when the cliff was claimed
+
 #### Claim Process Flow
 1. User calls `claim()` with:
    - Strategy ID
@@ -235,9 +277,18 @@ await vestingStrategy.createStrategy(
 
 // Vesting schedule (with 50% reward):
 // Total allocation: 1500 tokens (1000 base + 500 reward)
-// Day 0-7:  150 tokens (10% of 1500) available during cliff
-// Day 8-180: 1350 tokens vest linearly (~7.8 tokens per day)
-// Day 180+: All tokens available
+// Cliff amount: 150 tokens (10% of 1500)
+// Linear vesting: 1350 tokens over 173 days (~7.8 tokens per day)
+
+// Claiming scenarios:
+// Scenario 1: Claim during cliff period (Day 5)
+// - User receives: 150 tokens (cliff amount)
+// - Future claims: Linear vesting portion only
+
+// Scenario 2: Claim after cliff period (Day 15)
+// - User receives: 150 tokens (cliff) + linear vesting for 8 days (~62 tokens)
+// - Total: ~212 tokens in first claim
+// - Future claims: Remaining linear vesting portion
 ```
 
 ### 2. Delayed Claim Strategy with Reward
@@ -374,6 +425,33 @@ await vestingStrategy.createStrategy(
    - Expiry date must be in the future
    - Amounts must be greater than zero
    - Users cannot claim from multiple strategies
+
+## Recent Updates
+
+### Cliff Claiming Fix (Latest)
+
+**Issue Fixed:** Previously, if a user didn't claim their cliff amount during the cliff period, the cliff portion would be lost and redistributed across the vesting period. This meant users who didn't claim during the cliff period would only receive the linear vesting portion, effectively losing their cliff allocation.
+
+**Solution Implemented:** The contract now ensures that cliff amounts remain claimable until the user actually claims them, regardless of whether the cliff period has ended.
+
+**Before the Fix:**
+- User doesn't claim during cliff period (Days 0-7)
+- Cliff amount (e.g., 200 tokens) is lost
+- User only receives linear vesting portion in subsequent claims
+
+**After the Fix:**
+- User doesn't claim during cliff period (Days 0-7)
+- Cliff amount (e.g., 200 tokens) remains available
+- User receives cliff amount + linear vesting amount in first claim after cliff period
+- No cliff allocation is ever lost
+
+**Technical Implementation:**
+- Modified `_calculateCliffAmount()` function to check `userInfo.cliffClaimed` status
+- If cliff hasn't been claimed, it remains available regardless of time elapsed
+- Cliff is only marked as claimed after the user actually claims it
+- Linear vesting calculations remain accurate and include cliff amount in total vested calculation
+
+This fix ensures a fair and predictable vesting experience where users never lose their cliff allocation, even if they don't claim during the cliff period.
 
 ## Error Handling
 
