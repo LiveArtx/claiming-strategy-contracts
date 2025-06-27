@@ -294,18 +294,17 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
         // If we're past expiry, allow immediate release
         if (currentTime >= strategy.expiryDate) {
-            _vestingToken.transferFrom(
-                address(_tokenApprover),
-                user,
-                delayedAmount
-            );
-
-            // Update user vesting info to reflect the claim
             userInfo.claimedAmount += delayedAmount;
             userInfo.lastClaimTime = currentTime;
             userInfo.delayedAmount = 0;
             userInfo.isDelayedClaim = false;
             userInfo.delayStartTime = 0;
+
+            _vestingToken.transferFrom(
+                address(_tokenApprover),
+                user,
+                delayedAmount
+            );
 
             emit TokensClaimed(
                 user,
@@ -325,18 +324,17 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
             revert ClaimNotAllowed();
         }
 
-        _vestingToken.transferFrom(
-            address(_tokenApprover),
-            user,
-            delayedAmount
-        );
-
-        // Update user vesting info to reflect the claim
         userInfo.claimedAmount += delayedAmount;
         userInfo.lastClaimTime = currentTime;
         userInfo.delayedAmount = 0;
         userInfo.isDelayedClaim = false;
         userInfo.delayStartTime = 0;
+
+        _vestingToken.transferFrom(
+            address(_tokenApprover),
+            user,
+            delayedAmount
+        );
 
         emit TokensClaimed(user, strategyId, delayedAmount, false, currentTime);
     }
@@ -402,9 +400,6 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         // Check if there are any tokens to claim
         if (claimable == 0) revert NoTokensToClaim();
 
-        // Transfer tokens from token contract
-        _vestingToken.transferFrom(address(_tokenApprover), user, claimable);
-
         userInfo.claimedAmount += claimable;
         userInfo.lastClaimTime = currentTime;
         if (isInitial) {
@@ -413,6 +408,8 @@ contract VestingStrategy is OwnableUpgradeable, ReentrancyGuardUpgradeable {
         if (userInfo.strategyId == 0) {
             userInfo.strategyId = strategyId;
         }
+
+        _vestingToken.transferFrom(address(_tokenApprover), user, claimable);
 
         emit TokensClaimed(user, strategyId, claimable, isInitial, currentTime);
     }
