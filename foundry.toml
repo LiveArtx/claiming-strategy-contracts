@@ -11,6 +11,6 @@ ast = true
 viaIR = true
 build_info = true
 extra_output = ["storageLayout", "abi"]
-evm_version = "paris" # compatibility with Linea.
+# evm_version = "paris" # compatibility with Linea.
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

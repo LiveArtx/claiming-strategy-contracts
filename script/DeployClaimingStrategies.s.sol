@@ -16,8 +16,8 @@ import {Upgrades, Options} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 
 
 contract VestingStrategyDeployScript is Script {
-    address vestingToken = 0xcE1BeFb348B6D9C190aAe8C875925987c0e20EDD;
-    address approvalAddress = 0x495D4E2b3C7028Aa592cD2f6781b008dA60c1a07;
+    address vestingToken = 0x4DEC3139f4A6c638E26452d32181fe87A7530805; // Binance --> ArtToken
+    address approvalAddress = address(0); 
 
     error TransactionFailed(string message);
 
